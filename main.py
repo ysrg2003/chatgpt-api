@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 
-API_KEY = os.getenv("API_KEY", "CHANGE_ME_TO_A_STRONG_SECRET_KEY")
+API_KEY = os.getenv("API_KEY", "gptkey0")
 
 
 class AsyncBrowserThread(threading.Thread):

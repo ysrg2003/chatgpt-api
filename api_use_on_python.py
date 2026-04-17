@@ -1,8 +1,8 @@
 import openai
 
 client = openai.OpenAI(
-    API_KEY="CHANGE_ME_TO_A_STRONG_SECRET_KEY",        #the same api key in your eneroment , you set it as you prefer
-    base_url="http://localhost:7860/v1"
+    api_key="gptkey0",        #the same api key in your environment; set as you prefer
+    base_url="https://yousefsg-chatgpt-api.hf.space/v1"
 )
 response = client.chat.completions.create(
     model="",  # or gpt-4o-mini
