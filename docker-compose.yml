@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  mse-api:
+    build: .
+    container_name: mse_ai_api
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      - API_KEY=gptkey0
+      - PYTHONUNBUFFERED=1
