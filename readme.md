@@ -61,16 +61,57 @@
 
 ```
 .
-├── main.py               # التطبيق الرئيسي (FastAPI + قائمة الانتظار + Playwright)
-├── api_use_on_python.py  # مثال عميل متوافق مع مكتبة openai الرسمية
-├── requirements.txt      # متطلبات بايثون
-├── Dockerfile            # ملف الحاوية للنشر
-├── docker-compose.yml    # للتشغيل المحلي
-├── README.md             # التوثيق بالإنجليزية
-├── chatgpt_cookies.txt   # ملف الكوكيز لحساب مسجل دخول (مطلوب)
+├── main.py               # التطبيق الرئيسي: FastAPI + Job Queue + تكامل Playwright (تشغيل السيرفر)
+├── api_use_on_python.py  # مثال عميل يستخدم مكتبة `openai` (مباشر عبر /v1/chat/completions)
+├── test.py               # مثال عميل يستخدم /v1/jobs (نمط قائمة الانتظار؛ مناسب للمهام الطويلة)
+├── requirements.txt      # متطلبات Python للسيرفر والأمثلة
+├── Dockerfile            # إعداد الحاوية: يثبت Google Chrome ويدعو `playwright install`
+├── docker-compose.yml    # مثال لتشغيل الحاويات محليًا
+├── chatgpt_cookies.txt   # ملف الكوكيز المطلوب لحساب ChatGPT (يستخدمه Playwright)
+├── keepalive.py          # سكربت مساعدة للحفاظ على جلسة المتصفح (اختياري)
+
 ```
 
 ---
+
+ملاحظات قصيرة:
+
+- أمثلة الاستخدام موجودة كملفات (`api_use_on_python.py`, `test.py`) داخل المستودع — لا حاجة لنسخ الشيفرات داخل هذا الملف.
+
+- لتشغيل أمثلة العملاء فقط:
+  ```sh
+  pip install requests openai
+  ```
+
+- لتثبيت متطلبات السيرفر (شاملة):
+  ```sh
+  pip install -r requirements.txt
+  ```
+
+- ملاحظة Playwright وChrome:
+  - `main.py` ينشئ سياق Playwright باستخدام `channel="chrome"` وملف ملف التعريف المستمر `chrome-profile-real`.
+  - إذا كان Google Chrome مثبتًا على النظام، قد يُستخدم مباشرة عبر `channel="chrome"`، لكن يُنصح دائمًا بتثبيت متصفحات Playwright الموصى بها:
+    ```sh
+    playwright install chromium
+    ```
+  - يحتوي `Dockerfile` على خطوات لتثبيت Google Chrome وينفّذ `playwright install chromium` داخل الصورة، لذلك داخل الحاوية لا حاجة لإجراءات إضافية.
+
+## متى تستخدم api_use_on_python.py ومتى تستخدم test.py؟
+
+### api_use_on_python.py
+- يستخدم مكتبة openai الرسمية مع ‎/v1/chat/completions‎.
+- مناسب للمهام السريعة أو عند العمل محليًا أو على سيرفر بدون مهلة زمنية قصيرة.
+- إذا كان السيرفر يدعم تحويل الطلبات داخليًا إلى job queue، يمكنه معالجة المهام الطويلة تلقائيًا، لكن إذا كان هناك مهلة زمنية من reverse proxy أو Hugging Face Spaces قد ينقطع الاتصال من جهة العميل حتى لو استمر السيرفر في المعالجة.
+
+### test.py
+- يستخدم requests ويرسل الطلبات إلى ‎/v1/jobs‎ (نظام قائمة الانتظار).
+- مناسب للمهام الطويلة أو عند العمل على بيئة معرضة لمهلة زمنية قصيرة (مثل Hugging Face Spaces).
+- يضمن عدم انقطاع الاتصال حتى لو استغرقت المهمة وقتًا طويلًا، حيث يتم الاستعلام عن النتيجة بشكل متكرر حتى تكتمل.
+
+### نصيحة عامة
+- إذا كنت غير متأكد من بيئة التشغيل أو تتوقع مهام طويلة، استخدم ‎test.py‎ أو أي عميل يتعامل مع ‎/v1/jobs‎ مباشرة.
+- إذا كنت تعمل محليًا أو على سيرفر بدون مهلة زمنية، يمكنك استخدام ‎api_use_on_python.py‎ أو أي عميل متوافق مع openai.
+
 
 ## نقاط النهاية (Endpoints)
 
@@ -107,58 +148,28 @@
 
 ---
 
-## مثال للاستخدام (عميل بايثون)
+## أمثلة الاستخدام (ملفات)
 
-> **ملاحظة:** يجب تثبيت المكتبتين requests و openai لتشغيل الأمثلة التالية:
-> ```sh
-> pip install requests openai
-> ```
+الملفات `api_use_on_python.py` و `test.py` تحتويان أمثلة جاهزة للاستخدام — لا داعي لنسخ الشيفرات داخل هذا الملف، شغّل الملفات مباشرة لتجربة الطلبات.
 
-### مثال استخدام مباشر (متوافق مع openai-python الحديث)
-```python
-import openai
+- **مكتبات مطلوبة للأمثلة:** `requests`, `openai`.
+  - تثبيت سريع للأمثلة فقط:
+    ```sh
+    pip install requests openai
+    ```
 
-client = openai.OpenAI(
-   api_key="YOUR_API_KEY",
-   base_url="http://localhost:7860/v1"
-)
-response = client.chat.completions.create(
-   model="gpt-4o-mini",
-   messages=[{"role": "user", "content": "Hello"}]
-)
-print(response.choices[0].message.content)
-```
+- **تثبيت المتطلبات الكاملة (السيرفر + أمثلة):**
+  ```sh
+  pip install -r requirements.txt
+  ```
 
-### مثال استخدام عبر requests (نمط قائمة الانتظار)
-```python
-import requests
-import time
-
-API_URL = "http://localhost:7860/v1/jobs"
-API_KEY = "your_secret_key"
-
-headers = {"Authorization": f"Bearer {API_KEY}"}
-
-# إرسال مهمة
-resp = requests.post(API_URL, json={
-   "messages": [{"role": "user", "content": "مرحباً!"}],
-   "model": "gpt-3.5-turbo",
-   "stream": False
-}, headers=headers)
-job_id = resp.json()["job_id"]
-
-# الاستعلام عن النتيجة
-while True:
-   r = requests.get(f"http://localhost:7860/v1/jobs/{job_id}", headers=headers)
-   data = r.json()
-   if data["status"] == "completed":
-      print(data["result"])
-      break
-   elif data["status"] == "failed":
-      print("خطأ:", data["error"])
-      break
-   time.sleep(2)
-```
+**ملاحظة مهمة عن Playwright والمتصفح:**
+- يستخدم `main.py` Playwright ويحاول تشغيل متصفح النظام عبر `channel="chrome"` عند إنشاء السياق (`launch_persistent_context`). هذا يعني أنه إذا كان Google Chrome مثبتًا على النظام، فقد يتم استخدامه مباشرة.
+- مع ذلك، لضمان توافق أفضل خاصة في بيئات جديدة أو داخل حاويات Docker، ننصح بتشغيل الأمر التالي لتثبيت متصفحات Playwright الموصى بها:
+  ```sh
+  playwright install chromium
+  ```
+- يحتوي `Dockerfile` أيضاً على خطوات لتثبيت Google Chrome وينفّذ `playwright install chromium` لذلك عند تشغيل الحاوية لا حاجة لإجراءات إضافية.
 
 ---
 
