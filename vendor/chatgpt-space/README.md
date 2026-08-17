@@ -7,8 +7,6 @@ app_port: 7860
 
 # ChatGPT Web API على Hugging Face
 
-> أدلة المشروع: [الإعداد والأسرار](docs/configuration.md) · [التشغيل والنشر](docs/operations.md) · [التكامل من مشروع آخر](docs/integration.md) · [نسخة Space المضمنة](vendor/chatgpt-space/README.md)
-
 هذا المشروع يحوّل جلسة ChatGPT في المتصفح إلى REST API متوافقة مع البنية الشائعة لـ OpenAI. يعتمد الخادم على **FastAPI** و**Playwright** وChromium headless داخل Docker. الفكرة مستوحاة من مشروع [cognitive_prosthetic][1]، وجرى تكييفها لبيئة Hugging Face Space بدل التشغيل المحلي التفاعلي.
 
 > هذا ليس منتجًا رسميًا من OpenAI. إنه أداة أتمتة لواجهة الويب مخصصة للتجارب الشخصية والتعليمية. قد تتغير واجهة ChatGPT أو شروط الخدمة، وقد تتوقف الأتمتة دون سابق إنذار. لا تستخدمه لتجاوز حدود أو ضوابط مزود الخدمة، ولا تعتبره بديلًا رسميًا لواجهة OpenAI.
