@@ -1,0 +1,68 @@
+name: Test image generation through HF Space
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Prompt sent to the deployed API
+        required: true
+        default: generate image of wise stikman read book in libary
+        type: string
+
+jobs:
+  image-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call deployed image API
+        env:
+          API_SECRET_KEY: ${{ secrets.API_SECRET_KEY }}
+          PROMPT: ${{ inputs.prompt }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+
+          payload = {
+              "model": "gpt-4o-mini",
+              "messages": [{"role": "user", "content": os.environ["PROMPT"]}],
+          }
+          request = urllib.request.Request(
+              "https://yousefsg-chatgpt-api.hf.space/v1/chat/completions",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Authorization": "Bearer " + os.environ["API_SECRET_KEY"],
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=540) as response:
+              body = response.read()
+              status = response.status
+          open("response.json", "wb").write(body)
+          print(f"HTTP status: {status}")
+          data = json.loads(body)
+          images = data.get("images") or []
+          print(f"Image count: {len(images)}")
+          if not images:
+              raise SystemExit("The API returned no images")
+          for index, image in enumerate(images):
+              data_url = image.get("data_url", "")
+              if not data_url.startswith("data:image/"):
+                  continue
+              header, encoded = data_url.split(",", 1)
+              extension = header.split("/", 1)[1].split(";", 1)[0] or "png"
+              with open(f"generated_image_{index}.{extension}", "wb") as output:
+                  output.write(base64.b64decode(encoded))
+              print(f"Wrote generated_image_{index}.{extension}")
+          PY
+      - name: Upload generated image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-image
+          path: |
+            response.json
+            generated_image_*
+          if-no-files-found: error
