@@ -210,13 +210,16 @@ class BrowserGateway:
                     raise RuntimeError("Could not find ChatGPT input")
                 previous_count = await self._assistant_count()
                 previous_text = await self._latest_assistant_text()
+                previous_image_count = await self._image_count()
                 await input_box.click()
                 await input_box.fill("")
                 await input_box.fill(prompt)
                 await input_box.press("Enter")
                 self.last_request_at = time.time()
 
-                response_text, images = await self._wait_for_response(prompt, previous_count, previous_text)
+                response_text, images = await self._wait_for_response(
+                    prompt, previous_count, previous_text, previous_image_count
+                )
                 return {"success": True, "response": response_text, "images": images, "prompt": prompt}
             except Exception as exc:
                 LOGGER.exception("ChatGPT request failed")
@@ -227,6 +230,7 @@ class BrowserGateway:
         prompt: str,
         previous_count: int,
         previous_text: str,
+        previous_image_count: int,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             raise RuntimeError("Browser page is unavailable")
@@ -236,13 +240,15 @@ class BrowserGateway:
         stable_samples = 0
         deadline = time.monotonic() + self.settings.request_timeout_seconds
         while time.monotonic() < deadline:
-            current_text, current_images = await self._extract_response(prompt, previous_count, previous_text)
+            current_text, current_images = await self._extract_response(
+                prompt, previous_count, previous_text, previous_image_count
+            )
             generation_active = await self._generation_active()
             image_signature = "|".join(item.get("src", "") for item in current_images)
             changed = bool(current_text or current_images)
-            if current_text and current_text == last_text and not generation_active:
+            if current_images and image_signature == last_image_signature:
                 stable_samples += 1
-            elif current_images and image_signature == last_image_signature and not generation_active:
+            elif current_text and current_text == last_text and not generation_active:
                 stable_samples += 1
             else:
                 stable_samples = 0
@@ -250,7 +256,9 @@ class BrowserGateway:
                     last_text = current_text
                     last_images = current_images
                     last_image_signature = image_signature
-            if changed and stable_samples >= 4 and not generation_active:
+            if current_images and stable_samples >= 3:
+                return last_text.strip(), last_images
+            if current_text and stable_samples >= 4 and not generation_active:
                 return last_text.strip(), last_images
             await asyncio.sleep(1)
         if last_text or last_images:
@@ -266,6 +274,14 @@ class BrowserGateway:
             ).count() > 0
         except Exception:
             return False
+
+    async def _image_count(self) -> int:
+        if self.page is None:
+            return 0
+        try:
+            return await self.page.locator("main img").count()
+        except Exception:
+            return 0
 
     async def _assistant_count(self) -> int:
         if self.page is None:
@@ -292,6 +308,7 @@ class BrowserGateway:
         prompt: str,
         previous_count: int,
         previous_text: str,
+        previous_image_count: int,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             return "", []
@@ -302,6 +319,8 @@ class BrowserGateway:
                 latest = messages.nth(count - 1)
                 text = (await latest.inner_text(timeout=3_000)).strip()
                 images = await self._extract_images(latest)
+                global_images = await self._extract_images(self.page.locator("main"), start_index=previous_image_count)
+                images = images or global_images
                 if count > previous_count or text != previous_text or images:
                     return self._clean_response(text, prompt), images
                 return "", []
@@ -309,12 +328,12 @@ class BrowserGateway:
             pass
         return "", []
 
-    async def _extract_images(self, container: Any) -> list[dict[str, str]]:
+    async def _extract_images(self, container: Any, start_index: int = 0) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
         try:
             image_locators = container.locator("img")
             count = await image_locators.count()
-            for index in range(count):
+            for index in range(start_index, count):
                 image = image_locators.nth(index)
                 src = (await image.get_attribute("src") or "").strip()
                 if not src:
