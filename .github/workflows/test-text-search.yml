@@ -6,12 +6,12 @@ on:
       text_prompt:
         description: Normal text prompt
         required: true
-        default: قل فقط: نجح اختبار النص
+        default: "قل فقط: نجح اختبار النص"
         type: string
       search_prompt:
         description: Live web-search prompt
         required: true
-        default: ابحث عن اخر موديل anthropic ai
+        default: "ابحث عن اخر موديل anthropic ai"
         type: string
 
 jobs:
