@@ -1,6 +1,13 @@
+---
+title: ChatGPT Web API
+description: OpenAI-compatible API backed by a ChatGPT browser session.
+sdk: docker
+app_port: 7860
+---
+
 # ChatGPT Web API على Hugging Face
 
-هذا المشروع يحوّل جلسة ChatGPT في المتصفح إلى REST API متوافقة مع البنية الشائعة لـ OpenAI. يعتمد الخادم على **FastAPI** و**Playwright** وChromium داخل Docker/Xvfb. الفكرة مستوحاة من مشروع [cognitive_prosthetic][1]، وجرى تكييفها لبيئة Hugging Face Space بدل التشغيل المحلي التفاعلي.
+هذا المشروع يحوّل جلسة ChatGPT في المتصفح إلى REST API متوافقة مع البنية الشائعة لـ OpenAI. يعتمد الخادم على **FastAPI** و**Playwright** وChromium headless داخل Docker. الفكرة مستوحاة من مشروع [cognitive_prosthetic][1]، وجرى تكييفها لبيئة Hugging Face Space بدل التشغيل المحلي التفاعلي.
 
 > هذا ليس منتجًا رسميًا من OpenAI. إنه أداة أتمتة لواجهة الويب مخصصة للتجارب الشخصية والتعليمية. قد تتغير واجهة ChatGPT أو شروط الخدمة، وقد تتوقف الأتمتة دون سابق إنذار. لا تستخدمه لتجاوز حدود أو ضوابط مزود الخدمة، ولا تعتبره بديلًا رسميًا لواجهة OpenAI.
 
@@ -14,7 +21,7 @@
 |---|---:|---|
 | `API_SECRET_KEY` | نعم | Bearer token لحماية API |
 | `CHATGPT_COOKIES_NETSCAPE` | نعم | جلسة ChatGPT بصيغة Netscape cookie export |
-| `CHATGPT_HEADLESS` | لا | الافتراضي `true`؛ يُستخدم داخل Xvfb |
+| `CHATGPT_HEADLESS` | لا | الافتراضي `true` لتشغيل Chromium في بيئة الخادم |
 | `CHATGPT_REQUEST_TIMEOUT` | لا | مهلة الرد بالثواني، الافتراضي 210 |
 | `RATE_LIMIT_REQUESTS` | لا | عدد الطلبات لكل نافذة، الافتراضي 20 |
 | `RATE_LIMIT_WINDOW_SECONDS` | لا | طول النافذة، الافتراضي 60 |

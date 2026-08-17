@@ -23,4 +23,4 @@ COPY . .
 
 EXPOSE 7860
 
-CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1440x900x24", "python", "main.py"]
+CMD ["python", "main.py"]
