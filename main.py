@@ -149,6 +149,39 @@ def format_tools_instruction(tools: list[dict[str, Any]], user_question: str) ->
     return "\n".join(lines)
 
 
+LIVE_SEARCH_PREFIX = "ابحث في الويب بحث حي:"
+LIVE_SEARCH_MARKERS = (
+    "ابحث في الويب",
+    "ابحث على الويب",
+    "بحث حي",
+    "ابحث في جوجل",
+    "ابحث في غوغل",
+    "ابحث عن",
+    "search the web",
+    "web search",
+    "search on google",
+    "search google",
+    "look up",
+)
+
+
+def should_force_live_search(messages: list[dict[str, Any]]) -> bool:
+    user_text = "\n".join(
+        _content_to_text(message.get("content", ""))
+        for message in messages
+        if isinstance(message, dict) and (message.get("role") == "user" or message.get("type") == "message")
+    ).lower()
+    return any(marker in user_text for marker in LIVE_SEARCH_MARKERS)
+
+
+def add_live_search_prefix(prompt: str, messages: list[dict[str, Any]]) -> str:
+    if not should_force_live_search(messages):
+        return prompt
+    if prompt.lstrip().startswith(LIVE_SEARCH_PREFIX):
+        return prompt
+    return f"{LIVE_SEARCH_PREFIX}\n{prompt}"
+
+
 def format_prompt(messages: list[dict[str, Any]], tools: Any = None) -> str:
     parts: list[str] = []
     system_parts: list[str] = []
@@ -329,6 +362,7 @@ async def chat_completions(request: Request):
     if validation_error:
         return validation_error
     prompt = format_prompt(messages or [], data.get("tools"))
+    prompt = add_live_search_prefix(prompt, messages or [])
     if not prompt or len(prompt) > MAX_PROMPT_CHARS:
         return JSONResponse(status_code=400, content={"error": {"message": "Prompt is empty or too large"}})
     started = int(time.time())
@@ -371,6 +405,7 @@ async def responses(request: Request):
     if not isinstance(messages, list) or not messages:
         return JSONResponse(status_code=400, content={"error": {"message": "input field is required"}})
     prompt = format_prompt(messages, data.get("tools"))
+    prompt = add_live_search_prefix(prompt, messages)
     if not prompt or len(prompt) > MAX_PROMPT_CHARS:
         return JSONResponse(status_code=400, content={"error": {"message": "Input is empty or too large"}})
     started = int(time.time())

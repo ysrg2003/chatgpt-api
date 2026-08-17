@@ -7,7 +7,13 @@ from unittest.mock import Mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from browser_gateway import parse_netscape_cookies
-from main import FixedWindowRateLimiter, format_prompt, parse_tool_calls
+from main import (
+    LIVE_SEARCH_PREFIX,
+    FixedWindowRateLimiter,
+    add_live_search_prefix,
+    format_prompt,
+    parse_tool_calls,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -36,6 +42,17 @@ class CoreTests(unittest.TestCase):
         self.assertIsNotNone(calls)
         self.assertEqual(calls[0]["function"]["name"], "search")
         self.assertIn('"q": "HF"', calls[0]["function"]["arguments"])
+
+    def test_live_search_prefix_is_added_for_search_requests(self):
+        prompt = format_prompt([{"role": "user", "content": "ابحث عن اخر موديل anthropic ai"}])
+        enriched = add_live_search_prefix(prompt, [{"role": "user", "content": "ابحث عن اخر موديل anthropic ai"}])
+        self.assertTrue(enriched.startswith(LIVE_SEARCH_PREFIX + "\n"))
+        self.assertEqual(enriched.count(LIVE_SEARCH_PREFIX), 1)
+
+    def test_live_search_prefix_is_not_added_for_normal_request(self):
+        messages = [{"role": "user", "content": "اشرح الذكاء الاصطناعي"}]
+        prompt = format_prompt(messages)
+        self.assertEqual(add_live_search_prefix(prompt, messages), prompt)
 
     def test_rate_limiter_blocks_after_limit(self):
         import main
