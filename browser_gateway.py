@@ -71,7 +71,9 @@ class BrowserGateway:
         self.context: BrowserContext | None = None
         self.page: Page | None = None
         self.ready = False
+        self.last_request_at = 0.0
         self.startup_error: str | None = None
+        self.image_data_cache: dict[str, str] = {}
         self.last_request_at: float | None = None
 
     async def start(self) -> None:
@@ -332,8 +334,40 @@ class BrowserGateway:
             pass
         return "", []
 
+    async def _download_image_data_url(self, src: str) -> str:
+        if not src or self.page is None:
+            return ""
+        if src in self.image_data_cache:
+            return self.image_data_cache[src]
+        try:
+            data_url = await self.page.evaluate(
+                """
+                async (url) => {
+                    const response = await fetch(url, {credentials: 'include'});
+                    if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
+                    const blob = await response.blob();
+                    const buffer = await blob.arrayBuffer();
+                    const bytes = new Uint8Array(buffer);
+                    let binary = '';
+                    const chunk = 0x8000;
+                    for (let i = 0; i < bytes.length; i += chunk) {
+                        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+                    }
+                    return `data:${blob.type || 'image/png'};base64,${btoa(binary)}`;
+                }
+                """,
+                src,
+            )
+            if isinstance(data_url, str) and data_url.startswith("data:"):
+                self.image_data_cache[src] = data_url
+                return data_url
+        except Exception:
+            LOGGER.warning("Could not download generated image inside browser session", exc_info=True)
+        return ""
+
     async def _extract_images(self, container: Any, start_index: int = 0) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
+        seen: set[str] = set()
         try:
             image_locators = container.locator("img")
             count = await image_locators.count()
@@ -345,8 +379,9 @@ class BrowserGateway:
                         src = (await image.locator("xpath=ancestor::a[1]").get_attribute("href") or "").strip()
                     except Exception:
                         src = ""
-                if not src:
+                if not src or src in seen:
                     continue
+                seen.add(src)
                 item: dict[str, str] = {"src": src, "alt": (await image.get_attribute("alt") or "")}
                 if src.startswith("blob:"):
                     try:
@@ -356,6 +391,10 @@ class BrowserGateway:
                         pass
                 elif src.startswith("data:"):
                     item["data_url"] = src
+                elif src.startswith(("http://", "https://")):
+                    data_url = await self._download_image_data_url(src)
+                    if data_url:
+                        item["data_url"] = data_url
                 images.append(item)
         except Exception:
             return images
