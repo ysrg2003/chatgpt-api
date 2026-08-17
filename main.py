@@ -263,6 +263,17 @@ async def request_context(request: Request, call_next):
 
 
 @app.get("/")
+async def root(request: Request):
+    gateway: BrowserGateway = request.app.state.browser
+    return {
+        "status": "running" if gateway.ready else "initializing",
+        "ready": gateway.ready,
+        "service": "chatgpt-web-api",
+        "health": "/health",
+        "error": gateway.startup_error,
+    }
+
+
 @app.get("/health")
 async def health(request: Request):
     gateway: BrowserGateway = request.app.state.browser
