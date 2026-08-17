@@ -6,6 +6,7 @@ intentionally isolated from HTTP and OpenAI-compatible response formatting.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -207,38 +208,53 @@ class BrowserGateway:
                 input_box = await self.find_input(15)
                 if input_box is None:
                     raise RuntimeError("Could not find ChatGPT input")
+                previous_count = await self._assistant_count()
+                previous_text = await self._latest_assistant_text()
                 await input_box.click()
                 await input_box.fill("")
                 await input_box.fill(prompt)
                 await input_box.press("Enter")
                 self.last_request_at = time.time()
 
-                response = await self._wait_for_response(prompt)
-                return {"success": True, "response": response, "prompt": prompt}
+                response_text, images = await self._wait_for_response(prompt, previous_count, previous_text)
+                return {"success": True, "response": response_text, "images": images, "prompt": prompt}
             except Exception as exc:
                 LOGGER.exception("ChatGPT request failed")
                 return {"success": False, "error": self._safe_error(exc)}
 
-    async def _wait_for_response(self, prompt: str) -> str:
+    async def _wait_for_response(
+        self,
+        prompt: str,
+        previous_count: int,
+        previous_text: str,
+    ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             raise RuntimeError("Browser page is unavailable")
         last_text = ""
+        last_images: list[dict[str, str]] = []
+        last_image_signature = ""
         stable_samples = 0
         deadline = time.monotonic() + self.settings.request_timeout_seconds
         while time.monotonic() < deadline:
-            current_text = await self._extract_response(prompt)
+            current_text, current_images = await self._extract_response(prompt, previous_count, previous_text)
             generation_active = await self._generation_active()
+            image_signature = "|".join(item.get("src", "") for item in current_images)
+            changed = bool(current_text or current_images)
             if current_text and current_text == last_text and not generation_active:
+                stable_samples += 1
+            elif current_images and image_signature == last_image_signature and not generation_active:
                 stable_samples += 1
             else:
                 stable_samples = 0
-                if current_text:
+                if changed:
                     last_text = current_text
-            if last_text and stable_samples >= 4 and not generation_active:
-                return last_text.strip()
+                    last_images = current_images
+                    last_image_signature = image_signature
+            if changed and stable_samples >= 4 and not generation_active:
+                return last_text.strip(), last_images
             await asyncio.sleep(1)
-        if last_text:
-            return last_text.strip()
+        if last_text or last_images:
+            return last_text.strip(), last_images
         raise TimeoutError("ChatGPT response did not stabilize before timeout")
 
     async def _generation_active(self) -> bool:
@@ -251,30 +267,71 @@ class BrowserGateway:
         except Exception:
             return False
 
-    async def _extract_response(self, prompt: str) -> str:
+    async def _assistant_count(self) -> int:
+        if self.page is None:
+            return 0
+        try:
+            return await self.page.locator('[data-message-author-role="assistant"]').count()
+        except Exception:
+            return 0
+
+    async def _latest_assistant_text(self) -> str:
         if self.page is None:
             return ""
-        selectors = (
-            '[data-message-author-role="assistant"]',
-            "main .agent-turn .markdown",
-            'main [data-message-author-role="assistant"] .markdown',
-            "main .markdown",
-        )
-        for selector in selectors:
-            try:
-                messages = self.page.locator(selector)
-                count = await messages.count()
-                if count:
-                    text = (await messages.nth(count - 1).inner_text(timeout=3_000)).strip()
-                    if text:
-                        return self._clean_response(text, prompt)
-            except Exception:
-                continue
         try:
-            body = await self.page.locator("body").inner_text(timeout=3_000)
-            return self._clean_response(body, prompt)
+            messages = self.page.locator('[data-message-author-role="assistant"]')
+            count = await messages.count()
+            if count:
+                return (await messages.nth(count - 1).inner_text(timeout=3_000)).strip()
         except Exception:
-            return ""
+            pass
+        return ""
+
+    async def _extract_response(
+        self,
+        prompt: str,
+        previous_count: int,
+        previous_text: str,
+    ) -> tuple[str, list[dict[str, str]]]:
+        if self.page is None:
+            return "", []
+        try:
+            messages = self.page.locator('[data-message-author-role="assistant"]')
+            count = await messages.count()
+            if count:
+                latest = messages.nth(count - 1)
+                text = (await latest.inner_text(timeout=3_000)).strip()
+                images = await self._extract_images(latest)
+                if count > previous_count or text != previous_text or images:
+                    return self._clean_response(text, prompt), images
+                return "", []
+        except Exception:
+            pass
+        return "", []
+
+    async def _extract_images(self, container: Any) -> list[dict[str, str]]:
+        images: list[dict[str, str]] = []
+        try:
+            image_locators = container.locator("img")
+            count = await image_locators.count()
+            for index in range(count):
+                image = image_locators.nth(index)
+                src = (await image.get_attribute("src") or "").strip()
+                if not src:
+                    continue
+                item: dict[str, str] = {"src": src, "alt": (await image.get_attribute("alt") or "")}
+                if src.startswith("blob:"):
+                    try:
+                        binary = await image.screenshot(type="png")
+                        item["data_url"] = "data:image/png;base64," + base64.b64encode(binary).decode("ascii")
+                    except Exception:
+                        pass
+                elif src.startswith("data:"):
+                    item["data_url"] = src
+                images.append(item)
+        except Exception:
+            return images
+        return images
 
     @staticmethod
     def _clean_response(text: str, prompt: str) -> str:

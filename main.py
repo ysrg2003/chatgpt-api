@@ -380,6 +380,7 @@ async def chat_completions(request: Request):
         "created": started,
         "model": data.get("model", "gpt-4o-mini"),
         "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if calls else "stop"}],
+        "images": result.get("images", []),
         "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": prompt_tokens + completion_tokens},
     }
 
@@ -424,6 +425,7 @@ async def responses(request: Request):
         "model": data.get("model", "gpt-4o-mini"),
         "status": "completed",
         "output": output,
+        "images": result.get("images", []),
         "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens},
     }
 
