@@ -1,0 +1,85 @@
+name: Test text and live web search through HF Space
+
+on:
+  workflow_dispatch:
+    inputs:
+      text_prompt:
+        description: Normal text prompt
+        required: true
+        default: قل فقط: نجح اختبار النص
+        type: string
+      search_prompt:
+        description: Live web-search prompt
+        required: true
+        default: ابحث عن اخر موديل anthropic ai
+        type: string
+
+jobs:
+  text-search-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Call text and live-search endpoints
+        env:
+          API_SECRET_KEY: ${{ secrets.API_SECRET_KEY }}
+          TEXT_PROMPT: ${{ inputs.text_prompt }}
+          SEARCH_PROMPT: ${{ inputs.search_prompt }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          base_url = "https://yousefsg-chatgpt-api.hf.space/v1/chat/completions"
+          cases = [
+              ("text", os.environ["TEXT_PROMPT"]),
+              ("live_search", os.environ["SEARCH_PROMPT"]),
+          ]
+          for name, prompt in cases:
+              last_error = None
+              for attempt in range(1, 4):
+                  payload = {
+                      "model": "gpt-4o-mini",
+                      "messages": [{"role": "user", "content": prompt}],
+                  }
+                  request = urllib.request.Request(
+                      base_url,
+                      data=json.dumps(payload).encode("utf-8"),
+                      headers={
+                          "Authorization": "Bearer " + os.environ["API_SECRET_KEY"],
+                          "Content-Type": "application/json",
+                      },
+                      method="POST",
+                  )
+                  try:
+                      with urllib.request.urlopen(request, timeout=300) as response:
+                          body = response.read()
+                          status = response.status
+                      data = json.loads(body)
+                      open(f"{name}_response.json", "wb").write(body)
+                      choices = data.get("choices") or []
+                      content = ((choices[0].get("message") or {}).get("content") if choices else "") or ""
+                      if status != 200:
+                          raise RuntimeError(f"HTTP status {status}")
+                      if not content.strip():
+                          raise RuntimeError("Empty assistant content")
+                      print(f"{name}: HTTP {status}, content_chars={len(content)}, attempt={attempt}")
+                      break
+                  except Exception as error:
+                      last_error = error
+                      print(f"{name}: attempt {attempt} failed: {error}")
+                      if attempt < 3:
+                          time.sleep(20)
+              else:
+                  raise SystemExit(f"{name} failed after retries: {last_error}")
+          PY
+      - name: Upload text and search responses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-search-results
+          path: |
+            text_response.json
+            live_search_response.json
+          if-no-files-found: warn
