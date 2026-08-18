@@ -358,11 +358,16 @@ class BrowserGateway:
                                     except Exception:
                                         await candidate_send.click(timeout=8_000, force=True)
                                     await asyncio.sleep(1.0)
-                                    # A Playwright locator click can complete without
-                                    # triggering this shell's real user-gesture path.
-                                    # Repeat through the page mouse at the visible button
-                                    # center only when no generation/assistant signal began.
-                                    if not await self._generation_active() and await self._assistant_count() <= previous_count:
+                                    # A locator click can complete without triggering the
+                                    # shell's real user-gesture path. Verify submission and
+                                    # try DOM click and page-mouse click before failing.
+                                    if not await self._submission_started(previous_count):
+                                        try:
+                                            await candidate_send.evaluate("(el) => el.click()")
+                                            await asyncio.sleep(1.0)
+                                        except Exception as dom_click_exc:
+                                            LOGGER.debug("DOM send fallback failed: %s", self._safe_error(dom_click_exc))
+                                    if not await self._submission_started(previous_count):
                                         try:
                                             button_box = await candidate_send.bounding_box()
                                             if button_box:
@@ -374,11 +379,13 @@ class BrowserGateway:
                                                 LOGGER.info("ChatGPT send fallback repeated with page mouse click")
                                         except Exception as mouse_exc:
                                             LOGGER.debug("Page mouse send fallback failed: %s", self._safe_error(mouse_exc))
-                                    sent_by_button = True
-                                    LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
-                                    break
+                                    sent_by_button = await self._submission_started(previous_count)
+                                    if sent_by_button:
+                                        LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
+                                        break
+                                    LOGGER.warning("ChatGPT send button did not submit or clear the composer")
                             if not sent_by_button:
-                                LOGGER.warning("Enter produced no generation signal and no enabled send button was found")
+                                raise RuntimeError("ChatGPT send control did not submit the prompt")
                         submitted = True
                         break
                     except Exception as exc:
@@ -396,8 +403,13 @@ class BrowserGateway:
                     raise RuntimeError(f"Could not interact with ChatGPT input ({diagnostic})")
                 self.last_request_at = time.time()
 
+                response_timeout = max(
+                    self.settings.request_timeout_seconds,
+                    540.0 if capture_images else self.settings.request_timeout_seconds,
+                )
                 response_text, images = await self._wait_for_response(
-                    prompt, previous_count, previous_text, previous_image_count, capture_images
+                    prompt, previous_count, previous_text, previous_image_count, capture_images,
+                    timeout_seconds=response_timeout,
                 )
                 return {"success": True, "response": response_text, "images": images, "prompt": prompt}
             except Exception as exc:
@@ -411,6 +423,7 @@ class BrowserGateway:
         previous_text: str,
         previous_image_count: int,
         capture_images: bool,
+        timeout_seconds: float | None = None,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             raise RuntimeError("Browser page is unavailable")
@@ -419,7 +432,7 @@ class BrowserGateway:
         last_image_signature = ""
         stable_samples = 0
         image_stable_samples = 0
-        deadline = time.monotonic() + self.settings.request_timeout_seconds
+        deadline = time.monotonic() + (timeout_seconds or self.settings.request_timeout_seconds)
         while time.monotonic() < deadline:
             current_text, current_images = await self._extract_response(
                 prompt, previous_count, previous_text, previous_image_count, capture_images
@@ -487,6 +500,21 @@ class BrowserGateway:
         except Exception:
             parts.append("send_button_diagnostic=error")
         return " ".join(parts)
+
+    async def _submission_started(self, previous_count: int) -> bool:
+        if self.page is None:
+            return False
+        if await self._generation_active() or await self._assistant_count() > previous_count:
+            return True
+        try:
+            input_box = self.page.locator("#prompt-textarea")
+            count = await input_box.count()
+            if count == 0:
+                return True
+            value = await input_box.first().evaluate("(el) => String(el.value ?? el.innerText ?? el.textContent ?? '')")
+            return not value.strip()
+        except Exception:
+            return False
 
     async def _generation_active(self) -> bool:
         if self.page is None:
@@ -650,6 +678,11 @@ class BrowserGateway:
         ):
             cleaned = cleaned.split(footer, 1)[0].strip()
         return cleaned
+
+    @staticmethod
+    def _is_image_quota_message(text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in ("free plan limit", "image generations requests", "limit resets"))
 
     @staticmethod
     def _safe_error(exc: Exception) -> str:
