@@ -395,6 +395,25 @@ class BrowserGateway:
             except Exception:
                 parts.append(f"{selector}:error")
         parts.append(f"generation_active={await self._generation_active()}")
+        try:
+            input_box = self.page.locator("#prompt-textarea")
+            input_count = await input_box.count()
+            input_lengths = []
+            for index in range(min(input_count, 2)):
+                input_lengths.append(str(len(await input_box.nth(index).evaluate("(el) => String(el.value ?? el.innerText ?? el.textContent ?? '')"))))
+            parts.append(f"prompt_count={input_count},prompt_lengths={','.join(input_lengths)}")
+        except Exception:
+            parts.append("prompt_diagnostic=error")
+        try:
+            send_buttons = self.page.locator("#composer-submit-button")
+            send_count = await send_buttons.count()
+            send_states = []
+            for index in range(min(send_count, 2)):
+                button = send_buttons.nth(index)
+                send_states.append(f"{await button.is_visible()}/{await button.is_enabled()}")
+            parts.append(f"send_button_count={send_count},send_states={','.join(send_states)}")
+        except Exception:
+            parts.append("send_button_diagnostic=error")
         return " ".join(parts)
 
     async def _generation_active(self) -> bool:
