@@ -181,9 +181,6 @@ class BrowserGateway:
                     count = await locator.count()
                     for index in range(count):
                         candidate = locator.nth(index)
-                        if (await candidate.get_attribute("aria-hidden") or "").lower() == "true":
-                            # A hidden prompt clone can exist in the logged-out shell.
-                            continue
                         classes = (await candidate.get_attribute("class") or "").lower()
                         if "fallbacktextarea" in classes or "fallback-textarea" in classes:
                             # ChatGPT's fallback editor is present in the DOM but is
@@ -195,6 +192,9 @@ class BrowserGateway:
                             box = await candidate.bounding_box()
                             if not box or box["width"] < 4 or box["height"] < 4:
                                 continue
+                            # Some ChatGPT shells mark the real, visible ProseMirror
+                            # editor as aria-hidden=true. Visibility, editability, and
+                            # non-zero geometry are stronger interaction signals.
                             await candidate.scroll_into_view_if_needed(timeout=1_000)
                         except Exception:
                             continue
