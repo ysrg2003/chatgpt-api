@@ -273,7 +273,11 @@ class BrowserGateway:
                             await input_box.click(timeout=8_000)
                         except Exception:
                             await input_box.click(timeout=8_000, force=True)
-                        await input_box.fill(prompt, timeout=8_000)
+                        tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
+                        if tag_name == "div":
+                            await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                        else:
+                            await input_box.fill(prompt, timeout=8_000)
                         await asyncio.sleep(0.2)
                         send_button = self.page.locator(
                             '#composer-submit-button, '
