@@ -117,7 +117,20 @@ curl -X POST https://<space>.hf.space/v1/chat/completions \
 ابحث في الويب بحث حي:
 ```
 
-وتُضاف البادئة مرة واحدة فقط. يطبق ذلك على `chat.completions` و`responses`، بينما لا تُضاف إلى الأسئلة العادية التي لا تطلب بحثًا خارجيًا.
+وتُضاف البادئة مرة واحدة فقط. يطبق ذلك على `chat.completions` و`responses`، بينما لا تُضاف إلى الأسئلة العادية التي لا تطلب بحثًا خارجيًا. لا يستخدم هذا المسار فحص DOM للصور؛ يعتمد على نص المساعد ونتيجة البحث فقط.
+
+## توليد الصور
+
+للطلبات التي تتضمن `output_type=image` أو prompt واضحًا مثل `generate image`، يفعّل الخادم استخراج الصور من DOM فقط لهذا الطلب. يُقبل العنصر إذا كان يحمل marker مثل `Generated image` أو رابط ChatGPT backend خاصًا بملف مولد. تُرفض favicon وavatar والصور القديمة حتى لا تتحول إلى `images[].data_url` مضللة.
+
+```bash
+curl -X POST https://<space>.hf.space/v1/chat/completions \
+  -H "Authorization: Bearer $API_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"generate image of a wise stickman reading a book in a library"}]}'
+```
+
+تحقق من أن `images` تحتوي صورة مولدة، وأن `images[].alt` أو `images[].src` يشير إلى asset مولد. إذا لم توجد صورة مولدة، يجب التعامل مع النتيجة كفشل صورة بدل قبول أول صورة صغيرة في الصفحة.
 
 ### بدء محادثة جديدة والحالة
 
@@ -142,6 +155,9 @@ python3 -m unittest discover -s tests -v
 أما اختبار المتصفح الحقيقي فيظل اختبار تكامل يعتمد على Secret صالح واتصال ChatGPT وDOM غير متغير. يجب وسمه `deferred` عند غياب هذه الشروط بدل اعتباره ناجحًا لمجرد أن Docker بُني.
 
 ## حدود معروفة
+
+استخراج DOM مخصص للصور فقط. النص والبحث لا يستدعيان image-count أو image locators، لكنهما يقرآن نص الرد من عناصر المساعد اللازمة للتفاعل مع واجهة ChatGPT. إذا تغيرت selectors الخاصة برسائل المساعد أو الصور، يجب تحديثها واختبار المسارات الثلاثة مجددًا.
+
 
 الخادم يستخدم جلسة ChatGPT واحدة، لذلك يعالج الطلبات بالتسلسل. لا توجد قاعدة بيانات أو ذاكرة محادثات مستقلة؛ الذاكرة هي حالة جلسة الويب الحالية. لا يوجد streaming في هذه النسخة. كما أن selectors الخاصة بواجهة ChatGPT قد تحتاج تحديثًا إذا تغيرت الصفحة. معدل الاستجابة والاعتمادية يعتمدان على ChatGPT وHF، ولا يوجد ادعاء بتوافر إنتاجي أو SLA.
 
