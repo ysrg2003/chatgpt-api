@@ -21,6 +21,31 @@ https://YOUR_USERNAME-YOUR_SPACE.hf.space
 | `POST /v1/chat/completions` | Bearer | النص، البحث الحي، والصور |
 | `POST /v1/responses` | Bearer | واجهة responses المتوافقة |
 
+### Base URL: أين يوجد وأين لا يوجد؟
+
+`chatgpt-api` هو الخادم نفسه، ولذلك لا يحتاج متغيرًا اسمه `CHATGPT_API_BASE_URL` لكي يعمل. عند نشره في Hugging Face، تنشئ المنصة عنوان الوصول تلقائيًا من الشكل:
+
+```text
+https://OWNER-SPACE.hf.space
+```
+
+هذا العنوان **ليس Secret** ولا يوضع داخل Secrets الخاصة بـSpace. يستعمله العملاء الخارجيون، مثل `ai-provider-router`، للوصول إلى الخدمة. إذا كانت لديك عدة Spaces، يملك كل Space عنوانًا مستقلًا، وتوضع هذه العناوين في إعدادات العميل أو router، لا في كود `chatgpt-api` نفسه.
+
+| المعلومة | المكان الصحيح |
+|---|---|
+| `API_SECRET_KEY` | Secret داخل كل Space |
+| `CHATGPT_COOKIES_NETSCAPE` | Secret داخل كل Space |
+| `PORT` وtimeouts وrate limits | Variables داخل كل Space |
+| Base URL الناتج من Hugging Face | يستخدمه router أو العميل الخارجي |
+
+لذلك يكفي من داخل Space اختبار العنوان الذي تعرضه Hugging Face:
+
+```bash
+curl -fsS "https://OWNER-SPACE.hf.space/health"
+```
+
+ولا تضف Base URL إلى `.env` في `chatgpt-api` إلا إذا كان لديك كود عميل اختياري داخل نفس المشروع.
+
 ## 2. كيف يعمل النظام
 
 يبدأ FastAPI في `main.py`، ثم ينشئ `BrowserGateway` في `browser_gateway.py`. يطلق `BrowserGateway` جلسة Chromium واحدة مستمرة، يحقن Cookies، يفتح ChatGPT، ويرسل الرسائل بالتسلسل تحت قفل واحد. لا يفحص HTML للصور في طلبات النص أو البحث؛ يفعّل `capture_images` فقط عندما يكون الطلب صورة.
