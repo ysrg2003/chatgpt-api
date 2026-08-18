@@ -243,12 +243,27 @@ export HF_TOKEN="REPLACE_WITH_HF_WRITE_TOKEN"
 
 GitHub يوضح أن Secrets تُضاف من إعدادات Actions وتُستهلك داخل workflow عبر `${{ secrets.NAME }}`، ولا ينبغي تمريرها في command line أو طباعتها [3].
 
+## Storage State كامل بدل Netscape Cookies
+
+`CHATGPT_STORAGE_STATE_JSON` هو Secret اختياري يحتوي Playwright Storage State كاملًا. أثبت الاختبار العملي أن Netscape Cookies قد تفتح صفحة Cloudflare أو تظهر `session expired`، بينما Storage State المصدّر من Chrome Profile اختباري صالح فتح ChatGPT وأرسل نصًا بنجاح عبر Playwright و`undetected-chromedriver`.
+
+أنشئ Profile منفصلًا مخصصًا لـChatGPT، سجّل الدخول يدويًا، وأرسل رسالة نصية للتأكد من صلاحية الجلسة. بعد ذلك صدّر الملف عبر Playwright:
+
+```python
+context.storage_state(path="chatgpt-storage.json", indexed_db=True)
+```
+
+ضع محتوى الملف كاملًا في Hugging Face Space → **Settings → Variables and secrets → Secrets** باسم `CHATGPT_STORAGE_STATE_JSON`. لا تضع الملف في Git أو Variables أو Issues، ولا تستخدم Profile حسابك الرئيسي. إذا وُجد Storage State صالح، يفضله `BrowserGateway` على `CHATGPT_COOKIES_NETSCAPE`.
+
+اختبره بطلب نصي بسيط، ولا تعتبر ظهور composer وحده نجاحًا؛ يجب أن يظهر Assistant response. عند انتهاء الجلسة أو الشك في انكشاف الملف، ألغِ جلسات ChatGPT، أنشئ State جديدًا من Profile اختباري، واستبدل Secret.
+
 ## 6. المتغيرات غير السرية
 
 | الاسم | النوع | default | الوظيفة | مكان الإعداد |
 |---|---|---:|---|---|
 | `PORT` | number | `7860` | منفذ Uvicorn داخل Docker | Variable أو Docker |
 | `CHATGPT_HEADLESS` | boolean | `true` | تشغيل Chromium بلا واجهة | Variable |
+| `CHATGPT_STORAGE_STATE_JSON` | JSON Secret | فارغ | Storage State كامل؛ يتغلب على Netscape Cookies عند وجوده | Secret |
 | `CHATGPT_READY_TIMEOUT` | seconds | `180` | انتظار جاهزية الجلسة | Variable |
 | `CHATGPT_REQUEST_TIMEOUT` | seconds | `210` | مهلة التفاعل النصي الافتراضية | Variable |
 | `MAX_PROMPT_CHARS` | number | `50000` | الحد الأعلى للبرومبت | Variable |

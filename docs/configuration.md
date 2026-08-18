@@ -7,7 +7,8 @@
 | الاسم | النوع | مطلوب | القيمة الافتراضية | المستهلك |
 |---|---|---:|---|---|
 | `API_SECRET_KEY` | Secret | نعم | لا يوجد | حماية نقاط API العامة |
-| `CHATGPT_COOKIES_NETSCAPE` | Secret | نعم | فارغ | جلسة Playwright داخل ChatGPT |
+| `CHATGPT_COOKIES_NETSCAPE` | Secret | نعم عند عدم استخدام Storage State | فارغ | جلسة Playwright داخل ChatGPT |
+| `CHATGPT_STORAGE_STATE_JSON` | Secret | اختياري؛ يتغلب على Netscape عند وجوده | فارغ | Storage State كامل لـPlaywright داخل ChatGPT |
 | `PORT` | Variable | لا | `7860` | منفذ Uvicorn وDocker |
 | `CHATGPT_HEADLESS` | Variable | لا | `true` | تشغيل Chromium بلا واجهة |
 | `CHATGPT_READY_TIMEOUT` | Variable | لا | `180` | مهلة تجهيز الجلسة بالثواني |
@@ -57,6 +58,38 @@ curl -i https://YOUR_SPACE.hf.space/v1/models \
 **Expiry, rotation, and revocation:** لا تنتهي القيمة تلقائيًا، لكن استبدلها دوريًا أو فور الشك في انكشافها. غيّر Secret، ثم حدّث العملاء الذين يستخدمونه.
 
 **What to do after accidental exposure:** احذف القيمة القديمة فورًا، أنشئ قيمة جديدة، أعد تشغيل Space، ولا تضع القيمة في Issue أو log أو commit.
+
+## بطاقة الاعتماد: `CHATGPT_STORAGE_STATE_JSON`
+
+**Exact name:** `CHATGPT_STORAGE_STATE_JSON`.
+
+**Classification:** Secret شديد الحساسية؛ ملف Playwright Storage State كامل وقد يحتوي Cookies قابلة لإعادة استخدام الجلسة.
+
+**Required or optional:** اختياري. إذا وُجد وكان JSON صالحًا، يستخدمه `browser_gateway.py` بدل تحميل `CHATGPT_COOKIES_NETSCAPE`، ولذلك لا يحتاج Space إلى أن تجمع الطريقتين لنفس الحساب.
+
+**Used by:** `browser_settings_from_env()` و`BrowserGateway.start()`؛ يمرر JSON إلى `browser.new_context(storage_state=...)` ولا يطبع القيم في السجل.
+
+**Where to obtain it:** أنشئ Chrome Profile اختباريًا منفصلًا، سجّل الدخول إلى ChatGPT، ثم صدّر Playwright Storage State باستخدام `context.storage_state(path=..., indexed_db=True)` إن كان إصدار Playwright يدعم ذلك. لا تصدّر Profile حسابك الرئيسي ولا تضع الملف في Git.
+
+**Expected format:** كائن JSON يحتوي عادةً على `cookies` ومصفوفة `origins` اختيارية. يجب أن تكون كل Cookie مشتملة على `name`, `value`, `domain`, و`path`.
+
+**Exact storage location:** Hugging Face Space → **Settings → Variables and secrets → Secrets** → `CHATGPT_STORAGE_STATE_JSON`. الصق محتوى JSON كاملًا في Secret، لا في Variable.
+
+**Priority rule:** إذا كان `CHATGPT_STORAGE_STATE_JSON` موجودًا وصالحًا، يفضله التطبيق على `CHATGPT_COOKIES_NETSCAPE`. هذا مهم لأن Storage State يمكن أن يحمل حالة مصادق عليها لا تنتقل دائمًا عبر Netscape Cookies وحدها.
+
+**Minimal health check:**
+
+```bash
+curl -sS https://YOUR_SPACE.hf.space/health
+```
+
+**Expected success:** تصبح الخدمة جاهزة ويظهر `ready: true`، ثم يعيد اختبار نص بسيط Assistant response. ظهور composer وحده ليس دليلًا كافيًا.
+
+**Common failure and fix:** رسالة `CHATGPT_STORAGE_STATE_JSON is invalid` تعني أن Secret ليس JSON صالحًا أو تم قصه أثناء اللصق. ورسالة `ChatGPT input was not found; session may be expired` تعني أن Storage State انتهت أو أن الحساب يحتاج تسجيل دخول يدويًا من جديد.
+
+**Expiry, rotation, and revocation:** اعتبر الملف مساويًا لجلسة تسجيل الدخول. عند انتهاء الجلسة، سجّل الدخول في Profile اختباري جديد، صدّر State جديدًا، استبدل Secret، ثم أعد تشغيل Space. عند الشك في انكشافه، سجّل الخروج وألغِ الجلسة فورًا واحذف Secret القديم.
+
+**What to do after accidental exposure:** سجّل الخروج من جلسات ChatGPT، ألغِ الجلسات النشطة، احذف Secret، أنشئ Storage State جديدًا من Profile منفصل، ولا ترفع الملف في Issue أو commit.
 
 ## بطاقة الاعتماد: `CHATGPT_COOKIES_NETSCAPE`
 
