@@ -291,6 +291,15 @@ class BrowserGateway:
                                 except Exception:
                                     await candidate_send.click(timeout=8_000, force=True)
                                 sent_by_button = True
+                                await asyncio.sleep(0.8)
+                                try:
+                                    remaining_text = await input_box.evaluate(
+                                        "(el) => String(el.value ?? el.innerText ?? el.textContent ?? '')"
+                                    )
+                                except Exception:
+                                    remaining_text = ""
+                                if remaining_text.strip() == prompt.strip():
+                                    await input_box.press("Enter", timeout=8_000)
                                 break
                         if not sent_by_button:
                             await input_box.press("Enter", timeout=8_000)
