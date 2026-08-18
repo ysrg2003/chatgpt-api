@@ -276,9 +276,11 @@ class BrowserGateway:
                         await input_box.fill(prompt, timeout=8_000)
                         await asyncio.sleep(0.2)
                         send_button = self.page.locator(
+                            '#composer-submit-button, '
                             'button[data-testid="send-button"], '
                             'button[aria-label*="Send prompt" i], '
-                            'button[aria-label="Send" i]'
+                            'button[aria-label="Send" i], '
+                            'button[aria-label*="إرسال" i]'
                         )
                         sent_by_button = False
                         for send_index in range(await send_button.count()):
