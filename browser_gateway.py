@@ -279,34 +279,40 @@ class BrowserGateway:
                         else:
                             await input_box.fill(prompt, timeout=8_000)
                         await asyncio.sleep(0.2)
-                        send_button = self.page.locator(
-                            '#composer-submit-button, '
-                            'button[data-testid="send-button"], '
-                            'button[aria-label*="Send prompt" i], '
-                            'button[aria-label="Send" i], '
-                            'button[aria-label*="إرسال" i]'
-                        )
-                        sent_by_button = False
-                        for send_index in range(await send_button.count()):
-                            candidate_send = send_button.nth(send_index)
-                            if await candidate_send.is_visible() and await candidate_send.is_enabled():
-                                try:
-                                    await candidate_send.click(timeout=8_000)
-                                except Exception:
-                                    await candidate_send.click(timeout=8_000, force=True)
-                                sent_by_button = True
-                                await asyncio.sleep(0.8)
-                                try:
-                                    remaining_text = await input_box.evaluate(
-                                        "(el) => String(el.value ?? el.innerText ?? el.textContent ?? '')"
-                                    )
-                                except Exception:
-                                    remaining_text = ""
-                                if remaining_text.strip() == prompt.strip():
-                                    await input_box.press("Enter", timeout=8_000)
-                                break
-                        if not sent_by_button:
-                            await input_box.press("Enter", timeout=8_000)
+                        # ChatGPT's ProseMirror composer is most reliably submitted by
+                        # the real keyboard path. Try the same Enter action a user would
+                        # perform before falling back to the explicit send button.
+                        await input_box.press("Enter", timeout=8_000)
+                        await asyncio.sleep(1.2)
+                        enter_started_generation = await self._generation_active()
+                        enter_created_assistant = await self._assistant_count() > previous_count
+                        if enter_started_generation or enter_created_assistant:
+                            LOGGER.info(
+                                "ChatGPT prompt submitted with Enter; generation=%s assistant_count_increased=%s",
+                                enter_started_generation,
+                                enter_created_assistant,
+                            )
+                        else:
+                            send_button = self.page.locator(
+                                '#composer-submit-button, '
+                                'button[data-testid="send-button"], '
+                                'button[aria-label*="Send prompt" i], '
+                                'button[aria-label="Send" i], '
+                                'button[aria-label*="إرسال" i]'
+                            )
+                            sent_by_button = False
+                            for send_index in range(await send_button.count()):
+                                candidate_send = send_button.nth(send_index)
+                                if await candidate_send.is_visible() and await candidate_send.is_enabled():
+                                    try:
+                                        await candidate_send.click(timeout=8_000)
+                                    except Exception:
+                                        await candidate_send.click(timeout=8_000, force=True)
+                                    sent_by_button = True
+                                    LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
+                                    break
+                            if not sent_by_button:
+                                LOGGER.warning("Enter produced no generation signal and no enabled send button was found")
                         submitted = True
                         break
                     except Exception as exc:
