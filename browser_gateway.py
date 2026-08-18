@@ -204,6 +204,21 @@ class BrowserGateway:
             await asyncio.sleep(0.5)
         return None
 
+    async def _input_diagnostics(self) -> str:
+        if self.page is None:
+            return "page=none"
+        parts = [f"url={self.page.url}"]
+        try:
+            parts.append(f"title={(await self.page.title())[:80]}")
+        except Exception:
+            parts.append("title=unavailable")
+        for selector in ("#prompt-textarea", "textarea", 'div[contenteditable="true"]'):
+            try:
+                parts.append(f"{selector}:count={await self.page.locator(selector).count()}")
+            except Exception:
+                parts.append(f"{selector}:count=error")
+        return " ".join(parts)
+
     async def new_chat(self) -> dict[str, Any]:
         async with self.lock:
             if not self.ready or self.page is None:
@@ -250,7 +265,9 @@ class BrowserGateway:
                             except Exception:
                                 pass
                 if not submitted:
-                    raise RuntimeError("Could not interact with ChatGPT input")
+                    diagnostic = await self._input_diagnostics()
+                    LOGGER.warning("ChatGPT input interaction unavailable: %s", diagnostic)
+                    raise RuntimeError(f"Could not interact with ChatGPT input ({diagnostic})")
                 self.last_request_at = time.time()
 
                 response_text, images = await self._wait_for_response(
