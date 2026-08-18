@@ -181,7 +181,16 @@ class BrowserGateway:
                     count = await locator.count()
                     for index in range(count):
                         candidate = locator.nth(index)
-                        if await candidate.is_visible():
+                        # ChatGPT sometimes leaves an aria-hidden editor clone in the
+                        # DOM. Playwright may report it as visible even though click()
+                        # can never reach it; skip it before returning the locator.
+                        if (await candidate.get_attribute("aria-hidden") or "").lower() == "true":
+                            continue
+                        if await candidate.is_visible() and await candidate.is_editable():
+                            try:
+                                await candidate.scroll_into_view_if_needed(timeout=1_000)
+                            except Exception:
+                                continue
                             return candidate
                 except Exception:
                     continue
