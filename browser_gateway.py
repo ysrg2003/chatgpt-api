@@ -257,6 +257,7 @@ class BrowserGateway:
                 previous_text = await self._latest_assistant_text()
                 previous_image_count = await self._image_count() if capture_images else 0
                 submitted = False
+                interaction_error = ""
                 for attempt in range(2):
                     input_box = await self.find_input(10)
                     if input_box is None and self.page is not None:
@@ -268,12 +269,16 @@ class BrowserGateway:
                     if input_box is None:
                         continue
                     try:
-                        await input_box.click(timeout=8_000)
+                        try:
+                            await input_box.click(timeout=8_000)
+                        except Exception:
+                            await input_box.click(timeout=8_000, force=True)
                         await input_box.fill(prompt, timeout=8_000)
                         await input_box.press("Enter", timeout=8_000)
                         submitted = True
                         break
-                    except Exception:
+                    except Exception as exc:
+                        interaction_error = self._safe_error(exc)[:240]
                         if attempt == 0 and self.page is not None:
                             try:
                                 await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
@@ -281,6 +286,8 @@ class BrowserGateway:
                                 pass
                 if not submitted:
                     diagnostic = await self._input_diagnostics()
+                    if interaction_error:
+                        diagnostic += f" interaction={interaction_error}"
                     LOGGER.warning("ChatGPT input interaction unavailable: %s", diagnostic)
                     raise RuntimeError(f"Could not interact with ChatGPT input ({diagnostic})")
                 self.last_request_at = time.time()
