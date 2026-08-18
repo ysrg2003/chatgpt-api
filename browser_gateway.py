@@ -179,19 +179,28 @@ class BrowserGateway:
                 try:
                     locator = self.page.locator(selector)
                     count = await locator.count()
+                    fallback_candidate = None
                     for index in range(count):
                         candidate = locator.nth(index)
-                        # ChatGPT sometimes leaves an aria-hidden editor clone in the
-                        # DOM. Playwright may report it as visible even though click()
-                        # can never reach it; skip it before returning the locator.
-                        if (await candidate.get_attribute("aria-hidden") or "").lower() == "true":
+                        if not await candidate.is_visible() or not await candidate.is_editable():
                             continue
-                        if await candidate.is_visible() and await candidate.is_editable():
-                            try:
-                                await candidate.scroll_into_view_if_needed(timeout=1_000)
-                            except Exception:
-                                continue
+                        try:
+                            await candidate.scroll_into_view_if_needed(timeout=1_000)
+                        except Exception:
+                            continue
+                        aria_hidden = (await candidate.get_attribute("aria-hidden") or "").lower()
+                        if aria_hidden != "true":
                             return candidate
+                        # ChatGPT's real ProseMirror editor can be marked aria-hidden
+                        # while its accessible clone is present. Keep it as a last
+                        # resort, but prefer any visible non-hidden candidate above.
+                        role = (await candidate.get_attribute("role") or "").lower()
+                        label = (await candidate.get_attribute("aria-label") or "").lower()
+                        contenteditable = (await candidate.get_attribute("contenteditable") or "").lower()
+                        if contenteditable == "true" and (role == "textbox" or "chat with chatgpt" in label):
+                            fallback_candidate = candidate
+                    if fallback_candidate is not None:
+                        return fallback_candidate
                 except Exception:
                     continue
             await asyncio.sleep(0.5)
@@ -217,12 +226,23 @@ class BrowserGateway:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
             try:
                 input_box = await self.find_input(15)
+                if input_box is None and self.page is not None:
+                    # Recover from a stale ChatGPT document or an interstitial that
+                    # appeared after startup before declaring the session unusable.
+                    try:
+                        await self.page.reload(wait_until="domcontentloaded", timeout=60_000)
+                    except Exception:
+                        await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60_000)
+                    input_box = await self.find_input(20)
                 if input_box is None:
                     raise RuntimeError("Could not find ChatGPT input")
                 previous_count = await self._assistant_count()
                 previous_text = await self._latest_assistant_text()
                 previous_image_count = await self._image_count() if capture_images else 0
-                await input_box.click()
+                try:
+                    await input_box.click(timeout=15_000)
+                except Exception:
+                    await input_box.click(timeout=5_000, force=True)
                 await input_box.fill("")
                 await input_box.fill(prompt)
                 await input_box.press("Enter")
