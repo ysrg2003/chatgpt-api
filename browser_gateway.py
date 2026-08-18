@@ -342,7 +342,28 @@ class BrowserGateway:
             await asyncio.sleep(1)
         if last_text or last_images:
             return last_text.strip(), last_images
-        raise TimeoutError("ChatGPT response did not stabilize before timeout")
+        diagnostic = await self._response_diagnostics()
+        raise TimeoutError(f"ChatGPT response did not stabilize before timeout ({diagnostic})")
+
+    async def _response_diagnostics(self) -> str:
+        if self.page is None:
+            return "page=none"
+        parts = []
+        for selector in ('[data-message-author-role="assistant"]', "main article", "main"):
+            try:
+                locator = self.page.locator(selector)
+                count = await locator.count()
+                lengths = []
+                for index in range(min(count, 3)):
+                    try:
+                        lengths.append(str(len(await locator.nth(index).inner_text(timeout=2_000))))
+                    except Exception:
+                        lengths.append("error")
+                parts.append(f"{selector}:count={count},lengths={','.join(lengths)}")
+            except Exception:
+                parts.append(f"{selector}:error")
+        parts.append(f"generation_active={await self._generation_active()}")
+        return " ".join(parts)
 
     async def _generation_active(self) -> bool:
         if self.page is None:
