@@ -3,7 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=7860 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    CHATGPT_HEADLESS=false
 
 WORKDIR /app
 
@@ -23,4 +24,4 @@ COPY . .
 
 EXPOSE 7860
 
-CMD ["python", "main.py"]
+CMD ["xvfb-run", "-a", "--server-args=-screen 0 1440x900x24 -nolisten tcp", "python", "main.py"]
