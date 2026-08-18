@@ -182,12 +182,19 @@ class BrowserGateway:
                     for index in range(count):
                         candidate = locator.nth(index)
                         if (await candidate.get_attribute("aria-hidden") or "").lower() == "true":
-                            # A hidden prompt clone can exist in the logged-out shell;
-                            # accepting it makes /health falsely report a ready session.
+                            # A hidden prompt clone can exist in the logged-out shell.
+                            continue
+                        classes = (await candidate.get_attribute("class") or "").lower()
+                        if "fallbacktextarea" in classes or "fallback-textarea" in classes:
+                            # ChatGPT's fallback editor is present in the DOM but is
+                            # not interactive when the rich editor is active.
                             continue
                         if not await candidate.is_visible() or not await candidate.is_editable():
                             continue
                         try:
+                            box = await candidate.bounding_box()
+                            if not box or box["width"] < 4 or box["height"] < 4:
+                                continue
                             await candidate.scroll_into_view_if_needed(timeout=1_000)
                         except Exception:
                             continue
@@ -216,27 +223,34 @@ class BrowserGateway:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
             try:
-                input_box = await self.find_input(15)
-                if input_box is None and self.page is not None:
-                    # Recover from a stale ChatGPT document or an interstitial that
-                    # appeared after startup before declaring the session unusable.
-                    try:
-                        await self.page.reload(wait_until="domcontentloaded", timeout=60_000)
-                    except Exception:
-                        await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60_000)
-                    input_box = await self.find_input(20)
-                if input_box is None:
-                    raise RuntimeError("Could not find ChatGPT input")
                 previous_count = await self._assistant_count()
                 previous_text = await self._latest_assistant_text()
                 previous_image_count = await self._image_count() if capture_images else 0
-                try:
-                    await input_box.click(timeout=15_000)
-                except Exception:
-                    await input_box.click(timeout=5_000, force=True)
-                await input_box.fill("")
-                await input_box.fill(prompt)
-                await input_box.press("Enter")
+                submitted = False
+                for attempt in range(2):
+                    input_box = await self.find_input(10)
+                    if input_box is None and self.page is not None:
+                        try:
+                            await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
+                        except Exception:
+                            await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=45_000)
+                        input_box = await self.find_input(12)
+                    if input_box is None:
+                        continue
+                    try:
+                        await input_box.click(timeout=8_000)
+                        await input_box.fill(prompt, timeout=8_000)
+                        await input_box.press("Enter", timeout=8_000)
+                        submitted = True
+                        break
+                    except Exception:
+                        if attempt == 0 and self.page is not None:
+                            try:
+                                await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
+                            except Exception:
+                                pass
+                if not submitted:
+                    raise RuntimeError("Could not interact with ChatGPT input")
                 self.last_request_at = time.time()
 
                 response_text, images = await self._wait_for_response(
