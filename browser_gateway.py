@@ -214,7 +214,22 @@ class BrowserGateway:
             parts.append("title=unavailable")
         for selector in ("#prompt-textarea", "textarea", 'div[contenteditable="true"]'):
             try:
-                parts.append(f"{selector}:count={await self.page.locator(selector).count()}")
+                locator = self.page.locator(selector)
+                count = await locator.count()
+                entries = []
+                for index in range(min(count, 3)):
+                    candidate = locator.nth(index)
+                    try:
+                        hidden = (await candidate.get_attribute("aria-hidden") or "").lower()
+                        classes = (await candidate.get_attribute("class") or "")[:80]
+                        visible = await candidate.is_visible()
+                        editable = await candidate.is_editable()
+                        box = await candidate.bounding_box()
+                        geometry = "none" if not box else f"{int(box['width'])}x{int(box['height'])}"
+                        entries.append(f"{index}:hidden={hidden},class={classes},visible={visible},editable={editable},box={geometry}")
+                    except Exception:
+                        entries.append(f"{index}:inspect=error")
+                parts.append(f"{selector}:count={count}[{' | '.join(entries)}]")
             except Exception:
                 parts.append(f"{selector}:count=error")
         return " ".join(parts)
