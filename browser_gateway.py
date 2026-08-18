@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class BrowserSettings:
     cookies_netscape: str
+    storage_state_json: str
     profile_path: str
     headless: bool
     request_timeout_seconds: float
@@ -79,15 +80,23 @@ class BrowserGateway:
     async def start(self) -> None:
         if self.ready:
             return
-        if not self.settings.cookies_netscape.strip():
-            self.startup_error = "CHATGPT_COOKIES_NETSCAPE is not configured"
-            LOGGER.error("Browser unavailable: ChatGPT cookie secret is missing")
-            return
+        storage_state: dict[str, Any] | None = None
+        storage_state_text = self.settings.storage_state_json.strip()
+        if storage_state_text:
+            try:
+                parsed_state = json.loads(storage_state_text)
+                if not isinstance(parsed_state, dict) or not isinstance(parsed_state.get("cookies", []), list):
+                    raise ValueError("storage state must be a JSON object with a cookies array")
+                storage_state = parsed_state
+            except Exception as exc:
+                self.startup_error = f"CHATGPT_STORAGE_STATE_JSON is invalid: {self._safe_error(exc)}"
+                LOGGER.error("Browser unavailable: storage state secret is invalid")
+                return
 
         cookies = parse_netscape_cookies(self.settings.cookies_netscape)
-        if not cookies:
-            self.startup_error = "CHATGPT_COOKIES_NETSCAPE contains no valid cookies"
-            LOGGER.error("Browser unavailable: cookie secret contains no valid entries")
+        if storage_state is None and not cookies:
+            self.startup_error = "CHATGPT_COOKIES_NETSCAPE or CHATGPT_STORAGE_STATE_JSON is required"
+            LOGGER.error("Browser unavailable: no session state secret is configured")
             return
 
         try:
@@ -103,7 +112,17 @@ class BrowserGateway:
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
-            if self.settings.profile_path:
+            if storage_state is not None:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=self.settings.headless,
+                    args=launch_args,
+                )
+                self.context = await self.browser.new_context(
+                    storage_state=storage_state,
+                    user_agent=user_agent,
+                    viewport={"width": 1440, "height": 900},
+                )
+            elif self.settings.profile_path:
                 os.makedirs(self.settings.profile_path, exist_ok=True)
                 self.context = await self.playwright.chromium.launch_persistent_context(
                     user_data_dir=self.settings.profile_path,
@@ -125,15 +144,16 @@ class BrowserGateway:
             await self.context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
-            accepted = 0
-            for cookie in cookies:
-                try:
-                    await self.context.add_cookies([cookie])
-                    accepted += 1
-                except Exception:
-                    LOGGER.warning("Skipped one invalid cookie entry")
-            if accepted == 0:
-                raise RuntimeError("No cookie entries could be loaded")
+            accepted = len(storage_state.get("cookies", [])) if storage_state is not None else 0
+            if storage_state is None:
+                for cookie in cookies:
+                    try:
+                        await self.context.add_cookies([cookie])
+                        accepted += 1
+                    except Exception:
+                        LOGGER.warning("Skipped one invalid cookie entry")
+                if accepted == 0:
+                    raise RuntimeError("No cookie entries could be loaded")
 
             self.page = await self.context.new_page()
             self.page.set_default_timeout(5_000)
@@ -166,7 +186,7 @@ class BrowserGateway:
                 LOGGER.debug("Ignoring browser cleanup error", exc_info=True)
         if self.playwright is not None:
             try:
-                self.playwright.stop()
+                await self.playwright.stop()
             except Exception:
                 LOGGER.debug("Ignoring Playwright cleanup error", exc_info=True)
         self.context = None
@@ -640,6 +660,7 @@ class BrowserGateway:
 def browser_settings_from_env() -> BrowserSettings:
     return BrowserSettings(
         cookies_netscape=os.getenv("CHATGPT_COOKIES_NETSCAPE", ""),
+        storage_state_json=os.getenv("CHATGPT_STORAGE_STATE_JSON", ""),
         profile_path=os.getenv("CHATGPT_PROFILE_PATH", "/tmp/chatgpt-profile"),
         headless=os.getenv("CHATGPT_HEADLESS", "true").lower() in {"1", "true", "yes"},
         request_timeout_seconds=float(os.getenv("CHATGPT_REQUEST_TIMEOUT", "210")),
