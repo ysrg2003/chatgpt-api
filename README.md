@@ -7,7 +7,7 @@ app_port: 7860
 
 # ChatGPT Web API على Hugging Face
 
-> أدلة المشروع: [الإعداد والأسرار](docs/configuration.md) · [التشغيل والنشر](docs/operations.md) · [التكامل من مشروع آخر](docs/integration.md) · [نسخة Space المضمنة](vendor/chatgpt-space/README.md)
+> أدلة المشروع: **[دليل ChatGPT الكامل من البداية إلى النهاية](docs/chatgpt-guide.md)** · [الإعداد والأسرار](docs/configuration.md) · [التشغيل والنشر](docs/operations.md) · [التكامل من مشروع آخر](docs/integration.md) · [نسخة Space المضمنة](vendor/chatgpt-space/README.md)
 
 هذا المشروع يحوّل جلسة ChatGPT في المتصفح إلى REST API متوافقة مع البنية الشائعة لـ OpenAI. يعتمد الخادم على **FastAPI** و**Playwright** وChromium headless داخل Docker. الفكرة مستوحاة من مشروع [cognitive_prosthetic][1]، وجرى تكييفها لبيئة Hugging Face Space بدل التشغيل المحلي التفاعلي.
 
@@ -29,9 +29,11 @@ app_port: 7860
 | `RATE_LIMIT_WINDOW_SECONDS` | لا | طول النافذة، الافتراضي 60 |
 | `ALLOWED_ORIGINS` | لا | origins مفصولة بفواصل؛ يظل فارغًا إذا لم توجد واجهة متصفح |
 
-## تجهيز الكوكيز بأمان
+## تجهيز الكوكيز والأسرار بأمان
 
-صدّر كوكيز جلسة ChatGPT من متصفحك بصيغة Netscape باستخدام أداة موثوقة محليًا، ثم الصق النص في Secret باسم `CHATGPT_COOKIES_NETSCAPE`. لا تضع النص في `README.md` أو ملف `.env` مُلتزم به أو أمر يظهر في سجل الطرفية. إذا انتهت الجلسة أو ظهر login page، صدّر كوكيز جديدة واستبدل Secret ثم أعد تشغيل Space.
+للمسار الكامل الذي يشرح إنشاء كل Secret وVariable، إعداد Hugging Face، تشغيل Docker، استدعاء النص والبحث والصورة، GitHub Actions، التدوير والإلغاء، واستكشاف الأخطاء، راجع **[دليل ChatGPT الكامل من البداية إلى النهاية](docs/chatgpt-guide.md)**.
+
+باختصار، صدّر Cookies جلسة ChatGPT من متصفحك بصيغة Netscape باستخدام أداة موثوقة محليًا، ثم الصق النص في Secret باسم `CHATGPT_COOKIES_NETSCAPE`. أنشئ `API_SECRET_KEY` عشوائيًا طويلًا باستخدام `openssl rand -hex 32` وضعه في Secrets أيضًا. لا تضع Cookies أو API secret في `README.md` أو ملف `.env` مُلتزم به أو أمر يظهر في سجل الطرفية. إذا انتهت الجلسة أو ظهر login page، صدّر Cookies جديدة واستبدل Secret ثم أعد تشغيل Space.
 
 ## التشغيل المحلي
 

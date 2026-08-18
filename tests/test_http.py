@@ -7,7 +7,9 @@ os.environ["CHATGPT_COOKIES_NETSCAPE"] = ""
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi.testclient import TestClient
-from main import app
+import main
+main.API_SECRET_KEY = "unit-test-secret"
+app = main.app
 
 
 class HttpTests(unittest.TestCase):
