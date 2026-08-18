@@ -324,7 +324,23 @@ class BrowserGateway:
                                         await candidate_send.click(timeout=8_000)
                                     except Exception:
                                         await candidate_send.click(timeout=8_000, force=True)
-                                    await asyncio.sleep(0.4)
+                                    await asyncio.sleep(1.0)
+                                    # A Playwright locator click can complete without
+                                    # triggering this shell's real user-gesture path.
+                                    # Repeat through the page mouse at the visible button
+                                    # center only when no generation/assistant signal began.
+                                    if not await self._generation_active() and await self._assistant_count() <= previous_count:
+                                        try:
+                                            button_box = await candidate_send.bounding_box()
+                                            if button_box:
+                                                await self.page.mouse.click(
+                                                    button_box["x"] + button_box["width"] / 2,
+                                                    button_box["y"] + button_box["height"] / 2,
+                                                )
+                                                await asyncio.sleep(1.0)
+                                                LOGGER.info("ChatGPT send fallback repeated with page mouse click")
+                                        except Exception as mouse_exc:
+                                            LOGGER.debug("Page mouse send fallback failed: %s", self._safe_error(mouse_exc))
                                     sent_by_button = True
                                     LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
                                     break
