@@ -275,14 +275,30 @@ class BrowserGateway:
                             await input_box.click(timeout=8_000, force=True)
                         tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
                         if tag_name == "div":
-                            await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                            # First use Playwright's contenteditable-aware fill so the
+                            # site's React/ProseMirror state receives a real input event.
+                            try:
+                                await input_box.fill(prompt, timeout=8_000)
+                            except Exception:
+                                await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                            current_content = await input_box.evaluate(
+                                "(el) => String(el.innerText ?? el.textContent ?? '')"
+                            )
+                            if current_content.strip() != prompt.strip():
+                                await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                            # Explicitly notify the editor even when its accessibility
+                            # wrapper is marked aria-hidden by the ChatGPT shell.
+                            await input_box.dispatch_event(
+                                "input", {"inputType": "insertText", "data": prompt}
+                            )
                         else:
                             await input_box.fill(prompt, timeout=8_000)
                         await asyncio.sleep(0.2)
                         # ChatGPT's ProseMirror composer is most reliably submitted by
                         # the real keyboard path. Try the same Enter action a user would
                         # perform before falling back to the explicit send button.
-                        await input_box.press("Enter", timeout=8_000)
+                        await input_box.focus()
+                        await self.page.keyboard.press("Enter", delay=20)
                         await asyncio.sleep(1.2)
                         enter_started_generation = await self._generation_active()
                         enter_created_assistant = await self._assistant_count() > previous_count
@@ -308,6 +324,7 @@ class BrowserGateway:
                                         await candidate_send.click(timeout=8_000)
                                     except Exception:
                                         await candidate_send.click(timeout=8_000, force=True)
+                                    await asyncio.sleep(0.4)
                                     sent_by_button = True
                                     LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
                                     break
