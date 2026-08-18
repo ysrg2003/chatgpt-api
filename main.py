@@ -150,6 +150,32 @@ def format_tools_instruction(tools: list[dict[str, Any]], user_question: str) ->
 
 
 LIVE_SEARCH_PREFIX = "ابحث في الويب بحث حي:"
+IMAGE_REQUEST_MARKERS = (
+    "generate image",
+    "create image",
+    "draw an image",
+    "draw a picture",
+    "make an image",
+    "أنشئ صورة",
+    "انشئ صورة",
+    "ولّد صورة",
+    "ولد صورة",
+    "اصنع صورة",
+    "توليد صورة",
+)
+
+
+def should_capture_images(data: dict[str, Any], prompt: str) -> bool:
+    output_type = str(data.get("output_type", "")).lower()
+    if output_type == "image":
+        return True
+    modalities = data.get("response_modalities") or data.get("modalities") or []
+    if isinstance(modalities, list) and any(str(value).lower() == "image" for value in modalities):
+        return True
+    lowered = prompt.lower()
+    return any(marker in lowered for marker in IMAGE_REQUEST_MARKERS)
+
+
 LIVE_SEARCH_MARKERS = (
     "ابحث في الويب",
     "ابحث على الويب",
@@ -363,10 +389,11 @@ async def chat_completions(request: Request):
         return validation_error
     prompt = format_prompt(messages or [], data.get("tools"))
     prompt = add_live_search_prefix(prompt, messages or [])
+    capture_images = should_capture_images(data, prompt)
     if not prompt or len(prompt) > MAX_PROMPT_CHARS:
         return JSONResponse(status_code=400, content={"error": {"message": "Prompt is empty or too large"}})
     started = int(time.time())
-    result = await request.app.state.browser.send_message(prompt)
+    result = await request.app.state.browser.send_message(prompt, capture_images=capture_images)
     if not result.get("success"):
         return JSONResponse(status_code=503, content=_safe_error(str(result.get("error", "Browser request failed"))))
     response_text = str(result["response"])
@@ -407,10 +434,11 @@ async def responses(request: Request):
         return JSONResponse(status_code=400, content={"error": {"message": "input field is required"}})
     prompt = format_prompt(messages, data.get("tools"))
     prompt = add_live_search_prefix(prompt, messages)
+    capture_images = should_capture_images(data, prompt)
     if not prompt or len(prompt) > MAX_PROMPT_CHARS:
         return JSONResponse(status_code=400, content={"error": {"message": "Input is empty or too large"}})
     started = int(time.time())
-    result = await request.app.state.browser.send_message(prompt)
+    result = await request.app.state.browser.send_message(prompt, capture_images=capture_images)
     if not result.get("success"):
         return JSONResponse(status_code=503, content=_safe_error(str(result.get("error", "Browser request failed"))))
     response_text = str(result["response"])

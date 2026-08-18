@@ -6,9 +6,10 @@ from unittest.mock import Mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from browser_gateway import parse_netscape_cookies
+from browser_gateway import BrowserGateway, parse_netscape_cookies
 from main import (
     LIVE_SEARCH_PREFIX,
+    should_capture_images,
     FixedWindowRateLimiter,
     add_live_search_prefix,
     format_prompt,
@@ -48,6 +49,22 @@ class CoreTests(unittest.TestCase):
         enriched = add_live_search_prefix(prompt, [{"role": "user", "content": "ابحث عن اخر موديل anthropic ai"}])
         self.assertTrue(enriched.startswith(LIVE_SEARCH_PREFIX + "\n"))
         self.assertEqual(enriched.count(LIVE_SEARCH_PREFIX), 1)
+
+    def test_image_capture_is_only_enabled_for_image_requests(self):
+        self.assertFalse(should_capture_images({}, "قل فقط: نجح اختبار النص"))
+        self.assertFalse(should_capture_images({}, "ابحث عن آخر موديل anthropic ai"))
+        self.assertTrue(should_capture_images({}, "generate image of a stickman"))
+        self.assertTrue(should_capture_images({"output_type": "image"}, "صورة"))
+
+    def test_image_candidate_filter_rejects_favicons(self):
+        self.assertTrue(BrowserGateway._is_generated_image_candidate(
+            "https://chatgpt.com/backend-api/estuary/content?id=file_123", "Generated image"
+        ))
+        self.assertTrue(BrowserGateway._is_generated_image_candidate("blob:https://chatgpt.com/abc", ""))
+        self.assertFalse(BrowserGateway._is_generated_image_candidate(
+            "https://www.google.com/s2/favicons?domain=example.com", ""
+        ))
+        self.assertFalse(BrowserGateway._is_generated_image_candidate("data:image/png;base64,abc", ""))
 
     def test_live_search_prefix_is_not_added_for_normal_request(self):
         messages = [{"role": "user", "content": "اشرح الذكاء الاصطناعي"}]

@@ -202,7 +202,7 @@ class BrowserGateway:
                 self.startup_error = self._safe_error(exc)
                 return {"success": False, "error": self.startup_error}
 
-    async def send_message(self, prompt: str) -> dict[str, Any]:
+    async def send_message(self, prompt: str, *, capture_images: bool = False) -> dict[str, Any]:
         async with self.lock:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
@@ -212,7 +212,7 @@ class BrowserGateway:
                     raise RuntimeError("Could not find ChatGPT input")
                 previous_count = await self._assistant_count()
                 previous_text = await self._latest_assistant_text()
-                previous_image_count = await self._image_count()
+                previous_image_count = await self._image_count() if capture_images else 0
                 await input_box.click()
                 await input_box.fill("")
                 await input_box.fill(prompt)
@@ -220,7 +220,7 @@ class BrowserGateway:
                 self.last_request_at = time.time()
 
                 response_text, images = await self._wait_for_response(
-                    prompt, previous_count, previous_text, previous_image_count
+                    prompt, previous_count, previous_text, previous_image_count, capture_images
                 )
                 return {"success": True, "response": response_text, "images": images, "prompt": prompt}
             except Exception as exc:
@@ -233,6 +233,7 @@ class BrowserGateway:
         previous_count: int,
         previous_text: str,
         previous_image_count: int,
+        capture_images: bool,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             raise RuntimeError("Browser page is unavailable")
@@ -244,7 +245,7 @@ class BrowserGateway:
         deadline = time.monotonic() + self.settings.request_timeout_seconds
         while time.monotonic() < deadline:
             current_text, current_images = await self._extract_response(
-                prompt, previous_count, previous_text, previous_image_count
+                prompt, previous_count, previous_text, previous_image_count, capture_images
             )
             generation_active = await self._generation_active()
             image_signature = "|".join(item.get("src", "") for item in current_images)
@@ -314,17 +315,22 @@ class BrowserGateway:
         previous_count: int,
         previous_text: str,
         previous_image_count: int,
+        capture_images: bool,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
             return "", []
         try:
-            global_images = await self._extract_images(self.page.locator("main"), start_index=previous_image_count)
+            global_images = (
+                await self._extract_images(self.page.locator("main"), start_index=previous_image_count)
+                if capture_images
+                else []
+            )
             messages = self.page.locator('[data-message-author-role="assistant"]')
             count = await messages.count()
             if count:
                 latest = messages.nth(count - 1)
                 text = (await latest.inner_text(timeout=3_000)).strip()
-                images = await self._extract_images(latest) or global_images
+                images = (await self._extract_images(latest) if capture_images else []) or global_images
                 if count > previous_count or text != previous_text or images:
                     return self._clean_response(text, prompt), images
                 return "", []
@@ -365,6 +371,18 @@ class BrowserGateway:
             LOGGER.warning("Could not download generated image inside browser session", exc_info=True)
         return ""
 
+    @staticmethod
+    def _is_generated_image_candidate(src: str, alt: str) -> bool:
+        source = src.lower()
+        description = alt.lower()
+        if src.startswith("blob:"):
+            return True
+        if "generated image" in description or "generated_image" in description:
+            return True
+        if "backend-api" in source and ("file_" in source or "estuary" in source or "/content" in source):
+            return True
+        return src.startswith("data:") and "generated" in description
+
     async def _extract_images(self, container: Any, start_index: int = 0) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
         seen: set[str] = set()
@@ -381,8 +399,11 @@ class BrowserGateway:
                         src = ""
                 if not src or src in seen:
                     continue
+                alt = (await image.get_attribute("alt") or "").strip()
+                if not self._is_generated_image_candidate(src, alt):
+                    continue
                 seen.add(src)
-                item: dict[str, str] = {"src": src, "alt": (await image.get_attribute("alt") or "")}
+                item: dict[str, str] = {"src": src, "alt": alt}
                 if src.startswith("blob:"):
                     try:
                         binary = await image.screenshot(type="png")
