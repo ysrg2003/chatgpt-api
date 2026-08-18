@@ -179,28 +179,19 @@ class BrowserGateway:
                 try:
                     locator = self.page.locator(selector)
                     count = await locator.count()
-                    fallback_candidate = None
                     for index in range(count):
                         candidate = locator.nth(index)
+                        if (await candidate.get_attribute("aria-hidden") or "").lower() == "true":
+                            # A hidden prompt clone can exist in the logged-out shell;
+                            # accepting it makes /health falsely report a ready session.
+                            continue
                         if not await candidate.is_visible() or not await candidate.is_editable():
                             continue
                         try:
                             await candidate.scroll_into_view_if_needed(timeout=1_000)
                         except Exception:
                             continue
-                        aria_hidden = (await candidate.get_attribute("aria-hidden") or "").lower()
-                        if aria_hidden != "true":
-                            return candidate
-                        # ChatGPT's real ProseMirror editor can be marked aria-hidden
-                        # while its accessible clone is present. Keep it as a last
-                        # resort, but prefer any visible non-hidden candidate above.
-                        role = (await candidate.get_attribute("role") or "").lower()
-                        label = (await candidate.get_attribute("aria-label") or "").lower()
-                        contenteditable = (await candidate.get_attribute("contenteditable") or "").lower()
-                        if contenteditable == "true" and (role == "textbox" or "chat with chatgpt" in label):
-                            fallback_candidate = candidate
-                    if fallback_candidate is not None:
-                        return fallback_candidate
+                        return candidate
                 except Exception:
                     continue
             await asyncio.sleep(0.5)
