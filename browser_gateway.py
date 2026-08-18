@@ -92,23 +92,36 @@ class BrowserGateway:
 
         try:
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(
-                headless=self.settings.headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    "--disable-setuid-sandbox",
-                ],
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--disable-setuid-sandbox",
+            ]
+            user_agent = (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
-            self.context = await self.browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1440, "height": 900},
-            )
+            if self.settings.profile_path:
+                os.makedirs(self.settings.profile_path, exist_ok=True)
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=self.settings.profile_path,
+                    headless=self.settings.headless,
+                    args=launch_args,
+                    user_agent=user_agent,
+                    viewport={"width": 1440, "height": 900},
+                )
+                self.browser = None
+            else:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=self.settings.headless,
+                    args=launch_args,
+                )
+                self.context = await self.browser.new_context(
+                    user_agent=user_agent,
+                    viewport={"width": 1440, "height": 900},
+                )
             await self.context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
@@ -627,7 +640,7 @@ class BrowserGateway:
 def browser_settings_from_env() -> BrowserSettings:
     return BrowserSettings(
         cookies_netscape=os.getenv("CHATGPT_COOKIES_NETSCAPE", ""),
-        profile_path=os.getenv("CHATGPT_PROFILE_PATH", ""),
+        profile_path=os.getenv("CHATGPT_PROFILE_PATH", "/tmp/chatgpt-profile"),
         headless=os.getenv("CHATGPT_HEADLESS", "true").lower() in {"1", "true", "yes"},
         request_timeout_seconds=float(os.getenv("CHATGPT_REQUEST_TIMEOUT", "210")),
         ready_timeout_seconds=float(os.getenv("CHATGPT_READY_TIMEOUT", "180")),
