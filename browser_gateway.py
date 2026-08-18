@@ -274,7 +274,24 @@ class BrowserGateway:
                         except Exception:
                             await input_box.click(timeout=8_000, force=True)
                         await input_box.fill(prompt, timeout=8_000)
-                        await input_box.press("Enter", timeout=8_000)
+                        await asyncio.sleep(0.2)
+                        send_button = self.page.locator(
+                            'button[data-testid="send-button"], '
+                            'button[aria-label*="Send prompt" i], '
+                            'button[aria-label="Send" i]'
+                        )
+                        sent_by_button = False
+                        for send_index in range(await send_button.count()):
+                            candidate_send = send_button.nth(send_index)
+                            if await candidate_send.is_visible() and await candidate_send.is_enabled():
+                                try:
+                                    await candidate_send.click(timeout=8_000)
+                                except Exception:
+                                    await candidate_send.click(timeout=8_000, force=True)
+                                sent_by_button = True
+                                break
+                        if not sent_by_button:
+                            await input_box.press("Enter", timeout=8_000)
                         submitted = True
                         break
                     except Exception as exc:
