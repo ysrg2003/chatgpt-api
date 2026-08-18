@@ -12,7 +12,7 @@
 | `PORT` | Variable | لا | `7860` | منفذ Uvicorn وDocker |
 | `CHATGPT_HEADLESS` | Variable | لا | `true` | تشغيل Chromium بلا واجهة |
 | `CHATGPT_READY_TIMEOUT` | Variable | لا | `180` | مهلة تجهيز الجلسة بالثواني |
-| `CHATGPT_REQUEST_TIMEOUT` | Variable | لا | `210` | مهلة الطلب الواحد بالثواني |
+| `CHATGPT_REQUEST_TIMEOUT` | Variable | لا | `210` | مهلة النص والبحث؛ الصور ترفع الحد داخليًا إلى 540 ثانية على الأقل |
 | `MAX_PROMPT_CHARS` | Variable | لا | `50000` | الحد الأقصى لطول البرومبت |
 | `RATE_LIMIT_REQUESTS` | Variable | لا | `20` | عدد الطلبات لكل نافذة |
 | `RATE_LIMIT_WINDOW_SECONDS` | Variable | لا | `60` | طول نافذة تحديد المعدل |
@@ -151,4 +151,4 @@ git ls-files .env
 
 ## إعداد Hugging Face Space
 
-في إعدادات Space، ضع Secrets فقط للقيم الحساسة، وVariables للقيم غير الحساسة. لا تضع Cookies أو API secret في قسم Variables العام. بعد التعديل استخدم **Restart**، ثم انتظر حتى يصبح runtime `RUNNING` واختبر `/health`.
+في إعدادات Space، ضع Secrets فقط للقيم الحساسة، وVariables للقيم غير الحساسة. لا تضع Cookies أو API secret في قسم Variables العام. بعد التعديل استخدم **Restart**، ثم انتظر حتى يصبح runtime `RUNNING` واختبر `/health`. قيمة `CHATGPT_REQUEST_TIMEOUT=210` تخص النص والبحث؛ عند تفعيل `capture_images` يرفع `BrowserGateway` مهلة انتظار الصورة داخليًا إلى **540 ثانية على الأقل** حتى لا ينتهي طلب التوليد قبل اكتماله.
