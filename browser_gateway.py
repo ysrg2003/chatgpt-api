@@ -206,6 +206,21 @@ class BrowserGateway:
             body_text = (await self.page.locator("body").inner_text(timeout=3_000)).lower()
             for marker in ("log in", "تسجيل الدخول", "session expired", "انتهت الجلسة", "challenge", "verify", "something went wrong"):
                 result["markers"][marker] = marker in body_text
+            visible_auth_controls: set[str] = set()
+            for selector in ("button", "a"):
+                controls = self.page.locator(selector)
+                for index in range(min(await controls.count(), 80)):
+                    control = controls.nth(index)
+                    try:
+                        if not await control.is_visible():
+                            continue
+                        label = (await control.inner_text(timeout=500)).strip().lower()
+                    except Exception:
+                        continue
+                    for marker in ("log in", "sign up", "continue with", "get started", "تسجيل الدخول", "إنشاء حساب"):
+                        if marker in label:
+                            visible_auth_controls.add(marker)
+            result["visible_auth_controls"] = sorted(visible_auth_controls)
         except Exception as exc:
             result["diagnostic_error"] = self._safe_error(exc)
         return result
