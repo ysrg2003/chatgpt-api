@@ -361,6 +361,13 @@ class BrowserGateway:
         async with self.lock:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
+            session_state = await self.session_diagnostics()
+            visible_auth_controls = session_state.get("visible_auth_controls", [])
+            if visible_auth_controls:
+                return {
+                    "success": False,
+                    "error": "ChatGPT session requires re-authentication; visible auth control detected",
+                }
             recovered_timeout = False
             try:
                 for request_attempt in range(2):

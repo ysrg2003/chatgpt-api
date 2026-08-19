@@ -73,6 +73,26 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(gateway.ready)
         gateway.find_input.assert_awaited_once_with(20)
 
+    def test_login_marker_fails_fast_before_prompt_submission(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+        gateway.page = object()
+        gateway.ready = True
+        gateway.session_diagnostics = AsyncMock(return_value={"visible_auth_controls": ["log in"]})
+        gateway._submit_prompt = AsyncMock()
+        result = asyncio.run(gateway.send_message("hello"))
+        self.assertFalse(result["success"])
+        self.assertIn("re-authentication", result["error"])
+        gateway._submit_prompt.assert_not_awaited()
+
     def test_stabilization_accepts_new_assistant_text_without_main_article(self):
         gateway = BrowserGateway(
             BrowserSettings(
