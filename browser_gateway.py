@@ -286,6 +286,11 @@ class BrowserGateway:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
             try:
+                if await self._generation_active():
+                    LOGGER.warning("ChatGPT page still reports an active generation before a new request; attempting recovery")
+                    await self._recover_after_timeout()
+                    if not self.ready or self.page is None:
+                        return {"success": False, "error": self.startup_error or "Browser recovery failed"}
                 previous_count = await self._assistant_count()
                 previous_text = await self._latest_assistant_text()
                 previous_image_count = await self._image_count() if capture_images else 0
@@ -413,8 +418,40 @@ class BrowserGateway:
                 )
                 return {"success": True, "response": response_text, "images": images, "prompt": prompt}
             except Exception as exc:
+                if isinstance(exc, TimeoutError):
+                    await self._recover_after_timeout()
                 LOGGER.exception("ChatGPT request failed")
                 return {"success": False, "error": self._safe_error(exc)}
+
+    async def _recover_after_timeout(self) -> None:
+        """Stop stale generation state and reload the page before the next request."""
+        if self.page is None:
+            return
+        try:
+            stop_button = self.page.locator(
+                'button[data-testid="stop-button"], button[aria-label*="Stop" i]'
+            )
+            for index in range(await stop_button.count()):
+                candidate = stop_button.nth(index)
+                if await candidate.is_visible() and await candidate.is_enabled():
+                    try:
+                        await candidate.click(timeout=5_000)
+                    except Exception:
+                        await candidate.click(timeout=5_000, force=True)
+                    await asyncio.sleep(0.5)
+                    break
+        except Exception:
+            LOGGER.debug("Could not click ChatGPT stop control during recovery", exc_info=True)
+        try:
+            if await self._generation_active():
+                LOGGER.warning("ChatGPT generation remained active; reloading the browser page")
+                await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
+                if not await self.find_input(20):
+                    raise RuntimeError("ChatGPT input was not found after generation recovery")
+        except Exception as exc:
+            self.ready = False
+            self.startup_error = self._safe_error(exc)
+            LOGGER.error("ChatGPT generation recovery failed: %s", self.startup_error)
 
     async def _wait_for_response(
         self,

@@ -2,11 +2,11 @@ import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from browser_gateway import BrowserGateway, parse_netscape_cookies
+from browser_gateway import BrowserGateway, BrowserSettings, parse_netscape_cookies
 from main import (
     LIVE_SEARCH_PREFIX,
     should_capture_images,
@@ -17,7 +17,59 @@ from main import (
 )
 
 
+class _RecoveryLocator:
+    def __init__(self, page):
+        self.page = page
+
+    async def count(self):
+        return 1
+
+    def nth(self, _index):
+        return self
+
+    async def is_visible(self):
+        return True
+
+    async def is_enabled(self):
+        return True
+
+    async def click(self, **_kwargs):
+        raise RuntimeError("stop button unavailable")
+
+
+class _RecoveryPage:
+    def __init__(self):
+        self.reloaded = False
+
+    def locator(self, _selector):
+        return _RecoveryLocator(self)
+
+    async def reload(self, **_kwargs):
+        self.reloaded = True
+
+
 class CoreTests(unittest.TestCase):
+    def test_generation_recovery_reloads_when_stop_control_fails(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+        page = _RecoveryPage()
+        gateway.page = page
+        gateway.ready = True
+        gateway._generation_active = AsyncMock(return_value=True)
+        gateway.find_input = AsyncMock(return_value=object())
+        asyncio.run(gateway._recover_after_timeout())
+        self.assertTrue(page.reloaded)
+        self.assertTrue(gateway.ready)
+        gateway.find_input.assert_awaited_once_with(20)
+
     def test_parse_netscape_cookies(self):
         text = "# Netscape HTTP Cookie File\n.chatgpt.com\tTRUE\t/\tTRUE\t0\tname\tvalue\n"
         cookies = parse_netscape_cookies(text)
