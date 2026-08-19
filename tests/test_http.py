@@ -22,6 +22,11 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(models.status_code, 200)
             invalid = client.post("/v1/chat/completions", headers={"Authorization": "Bearer unit-test-secret"}, json={})
             self.assertEqual(invalid.status_code, 400)
+            self.assertEqual(client.get("/diagnostics/session").status_code, 401)
+            diagnostics = client.get("/diagnostics/session", headers={"Authorization": "Bearer unit-test-secret"})
+            self.assertIn(diagnostics.status_code, (200, 503))
+            if diagnostics.status_code == 200:
+                self.assertNotIn("cookie_values", diagnostics.json())
 
 
 if __name__ == "__main__":

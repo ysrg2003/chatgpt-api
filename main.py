@@ -343,6 +343,14 @@ async def health(request: Request):
     return JSONResponse(status_code=200, content={"status": "initializing", "ready": False})
 
 
+@app.get("/diagnostics/session")
+async def session_diagnostics(request: Request):
+    auth_error = await _authorized_request(request)
+    if auth_error:
+        return auth_error
+    return await request.app.state.browser.session_diagnostics()
+
+
 @app.get("/status")
 async def status(request: Request):
     auth_error = await _authorized_request(request)

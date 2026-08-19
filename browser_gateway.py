@@ -172,6 +172,44 @@ class BrowserGateway:
             LOGGER.exception("Browser gateway failed during startup")
             await self.close()
 
+    async def session_diagnostics(self) -> dict[str, Any]:
+        """Return redacted browser/session signals for authorized operational diagnosis."""
+        result: dict[str, Any] = {
+            "ready": self.ready,
+            "startup_error": self.startup_error,
+            "page_url": "",
+            "page_title": "",
+            "cookie_count": 0,
+            "cookie_names": [],
+            "input_visible": False,
+            "stop_control_count": 0,
+            "assistant_count": 0,
+            "markers": {},
+        }
+        if self.context is not None:
+            try:
+                cookies = await self.context.cookies("https://chatgpt.com/")
+                result["cookie_count"] = len(cookies)
+                result["cookie_names"] = sorted({str(cookie.get("name", "")) for cookie in cookies if cookie.get("name")})
+            except Exception:
+                result["cookie_names"] = []
+        if self.page is None:
+            return result
+        try:
+            result["page_url"] = self.page.url
+            result["page_title"] = (await self.page.title())[:120]
+            result["input_visible"] = bool(await self.find_input(1))
+            result["stop_control_count"] = await self.page.locator(
+                'button[data-testid="stop-button"], button[aria-label*="Stop" i]'
+            ).count()
+            result["assistant_count"] = await self._assistant_count()
+            body_text = (await self.page.locator("body").inner_text(timeout=3_000)).lower()
+            for marker in ("log in", "تسجيل الدخول", "session expired", "انتهت الجلسة", "challenge", "verify", "something went wrong"):
+                result["markers"][marker] = marker in body_text
+        except Exception as exc:
+            result["diagnostic_error"] = self._safe_error(exc)
+        return result
+
     async def close(self) -> None:
         self.ready = False
         if self.context is not None:
