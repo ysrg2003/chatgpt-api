@@ -207,6 +207,7 @@ class BrowserGateway:
             for marker in ("log in", "تسجيل الدخول", "session expired", "انتهت الجلسة", "challenge", "verify", "something went wrong"):
                 result["markers"][marker] = marker in body_text
             visible_auth_controls: set[str] = set()
+            visible_auth_details: list[dict[str, Any]] = []
             for selector in ("button", "a"):
                 controls = self.page.locator(selector)
                 for index in range(min(await controls.count(), 80)):
@@ -214,13 +215,26 @@ class BrowserGateway:
                     try:
                         if not await control.is_visible():
                             continue
-                        label = (await control.inner_text(timeout=500)).strip().lower()
+                        aria_hidden = (await control.get_attribute("aria-hidden") or "").lower()
+                        box = await control.bounding_box()
+                        label = " ".join((await control.inner_text(timeout=500)).strip().lower().split())
                     except Exception:
+                        continue
+                    if aria_hidden == "true" or not box or box["width"] < 2 or box["height"] < 2:
                         continue
                     for marker in ("log in", "sign up", "continue with", "get started", "تسجيل الدخول", "إنشاء حساب"):
                         if marker in label:
                             visible_auth_controls.add(marker)
+                            visible_auth_details.append(
+                                {
+                                    "marker": marker,
+                                    "tag": selector,
+                                    "href_present": bool(await control.get_attribute("href")),
+                                    "box": {"width": round(box["width"], 1), "height": round(box["height"], 1)},
+                                }
+                            )
             result["visible_auth_controls"] = sorted(visible_auth_controls)
+            result["visible_auth_details"] = visible_auth_details[:10]
         except Exception as exc:
             result["diagnostic_error"] = self._safe_error(exc)
         return result
