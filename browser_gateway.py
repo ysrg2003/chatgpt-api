@@ -396,7 +396,7 @@ class BrowserGateway:
                             return {"success": False, "error": self.startup_error or "Browser recovery failed"}
                     previous_count = await self._assistant_count()
                     previous_text = await self._latest_assistant_text()
-                    previous_image_count = await self._image_count() if capture_images else 0
+                    previous_image_sources = await self._image_sources() if capture_images else []
                     await self._submit_prompt(prompt, previous_count)
                     self.last_request_at = time.time()
                     response_timeout = max(
@@ -408,7 +408,7 @@ class BrowserGateway:
                             prompt,
                             previous_count,
                             previous_text,
-                            previous_image_count,
+                            previous_image_sources,
                             capture_images,
                             timeout_seconds=response_timeout,
                         )
@@ -566,7 +566,7 @@ class BrowserGateway:
         prompt: str,
         previous_count: int,
         previous_text: str,
-        previous_image_count: int,
+        previous_image_sources: list[str],
         capture_images: bool,
         timeout_seconds: float | None = None,
     ) -> tuple[str, list[dict[str, str]]]:
@@ -580,7 +580,7 @@ class BrowserGateway:
         deadline = time.monotonic() + (timeout_seconds or self.settings.request_timeout_seconds)
         while time.monotonic() < deadline:
             current_text, current_images = await self._extract_response(
-                prompt, previous_count, previous_text, previous_image_count, capture_images
+                prompt, previous_count, previous_text, previous_image_sources, capture_images
             )
             generation_active = await self._generation_active()
             image_signature = "|".join(item.get("src", "") for item in current_images)
@@ -683,6 +683,22 @@ class BrowserGateway:
         except Exception:
             return 0
 
+    async def _image_sources(self) -> list[str]:
+        if self.page is None:
+            return []
+        try:
+            images = self.page.locator("main img")
+            sources: list[str] = []
+            for index in range(await images.count()):
+                src = (await images.nth(index).evaluate(
+                    "(node) => node.currentSrc || node.src || node.getAttribute('data-src') || ''"
+                ) or "").strip()
+                if src and src not in sources:
+                    sources.append(src)
+            return sources
+        except Exception:
+            return []
+
     async def _assistant_count(self) -> int:
         if self.page is None:
             return 0
@@ -708,7 +724,7 @@ class BrowserGateway:
         prompt: str,
         previous_count: int,
         previous_text: str,
-        previous_image_count: int,
+        previous_image_sources: list[str],
         capture_images: bool,
     ) -> tuple[str, list[dict[str, str]]]:
         if self.page is None:
@@ -717,8 +733,8 @@ class BrowserGateway:
             global_images = (
                                 await self._extract_images(
                     self.page.locator("main"),
-                    start_index=previous_image_count,
                     allow_unlabeled=True,
+                    exclude_sources=set(previous_image_sources),
                 )
                 if capture_images
                 else []
@@ -730,7 +746,11 @@ class BrowserGateway:
                 latest = messages.nth(count - 1)
                 text = (await latest.inner_text(timeout=3_000)).strip()
                 images = (
-                    await self._extract_images(latest, allow_unlabeled=True)
+                    await self._extract_images(
+                        latest,
+                        allow_unlabeled=True,
+                        exclude_sources=set(previous_image_sources),
+                    )
                     if capture_images
                     else []
                 ) or global_images
@@ -817,16 +837,17 @@ class BrowserGateway:
     async def _extract_images(
         self,
         container: Any,
-        start_index: int = 0,
         *,
         allow_unlabeled: bool = False,
+        exclude_sources: set[str] | None = None,
     ) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
         seen: set[str] = set()
         try:
             image_locators = container.locator("img")
             count = await image_locators.count()
-            for index in range(start_index, count):
+            excluded = exclude_sources or set()
+            for index in range(count):
                 image = image_locators.nth(index)
                 src = (await image.evaluate("(node) => node.currentSrc || node.src || node.getAttribute('data-src') || ''") or "").strip()
                 if not src:
@@ -834,7 +855,7 @@ class BrowserGateway:
                         src = (await image.locator("xpath=ancestor::a[1]").get_attribute("href") or "").strip()
                     except Exception:
                         src = ""
-                if not src or src in seen:
+                if not src or src in seen or src in excluded:
                     continue
                 alt = (await image.get_attribute("alt") or "").strip()
                 try:

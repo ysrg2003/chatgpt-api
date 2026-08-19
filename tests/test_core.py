@@ -109,7 +109,7 @@ class CoreTests(unittest.TestCase):
         gateway._generation_active = AsyncMock(return_value=False)
         gateway._assistant_count = AsyncMock(return_value=2)
         response_text, images = asyncio.run(
-            gateway._wait_for_response("hello", 1, "old answer", 0, False, timeout_seconds=1)
+            gateway._wait_for_response("hello", 1, "old answer", [], False, timeout_seconds=1)
         )
         self.assertEqual(response_text, "new answer")
         self.assertEqual(images, [])
@@ -177,6 +177,64 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(should_capture_images({}, "ابحث عن آخر موديل anthropic ai"))
         self.assertTrue(should_capture_images({}, "generate image of a stickman"))
         self.assertTrue(should_capture_images({"output_type": "image"}, "صورة"))
+
+    def test_image_extraction_does_not_depend_on_image_order(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+
+        class FakeImage:
+            def __init__(self, src, alt="", width=128, height=128):
+                self.src, self.alt, self.width, self.height = src, alt, width, height
+
+            async def evaluate(self, expression):
+                if "naturalWidth" in expression:
+                    return {"width": self.width, "height": self.height}
+                return self.src
+
+            async def get_attribute(self, name):
+                return self.alt if name == "alt" else None
+
+            def locator(self, _selector):
+                return self
+
+            async def count(self):
+                return 0
+
+        class FakeImages:
+            def __init__(self, items):
+                self.items = items
+
+            async def count(self):
+                return len(self.items)
+
+            def nth(self, index):
+                return self.items[index]
+
+        class FakeContainer:
+            def __init__(self, items):
+                self.items = items
+
+            def locator(self, _selector):
+                return FakeImages(self.items)
+
+        generated = "https://chatgpt.com/backend-api/files/file_new/content"
+        old_avatar = "https://chatgpt.com/assets/avatar.png"
+        images = asyncio.run(
+            gateway._extract_images(
+                FakeContainer([FakeImage(generated, ""), FakeImage(old_avatar, "avatar")]),
+                allow_unlabeled=True,
+                exclude_sources={old_avatar},
+            )
+        )
+        self.assertEqual([item["src"] for item in images], [generated])
 
     def test_image_candidate_filter_rejects_favicons(self):
         self.assertTrue(BrowserGateway._is_generated_image_candidate(
