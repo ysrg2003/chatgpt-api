@@ -235,9 +235,56 @@ class BrowserGateway:
                             )
             result["visible_auth_controls"] = sorted(visible_auth_controls)
             result["visible_auth_details"] = visible_auth_details[:10]
+            result["image_dom"] = await self._image_dom_diagnostics()
         except Exception as exc:
             result["diagnostic_error"] = self._safe_error(exc)
         return result
+
+    async def _image_dom_diagnostics(self) -> dict[str, Any]:
+        if self.page is None:
+            return {}
+        try:
+            return await self.page.evaluate(
+                """
+                () => {
+                  const root = document.querySelector('main') || document.body;
+                  const redact = (value) => {
+                    const text = String(value || '').toLowerCase();
+                    const kind = text.startsWith('data:image/') ? 'data_image' :
+                      text.startsWith('blob:') ? 'blob' :
+                      text.startsWith('http') ? 'http' : 'none';
+                    const markers = ['backend-api', 'oaidalle', 'file_', 'estuary', '/content', '/files/', 'generated'];
+                    return {kind, markers: markers.filter((marker) => text.includes(marker))};
+                  };
+                  const nodes = [...root.querySelectorAll('img, picture, canvas, svg, a')];
+                  const details = nodes.slice(0, 80).map((node) => {
+                    const rect = node.getBoundingClientRect();
+                    const source = node.currentSrc || node.src || node.getAttribute('data-src') || node.href || '';
+                    return {
+                      tag: node.tagName.toLowerCase(),
+                      visible: !!(rect.width > 2 && rect.height > 2),
+                      width: Math.round(rect.width),
+                      height: Math.round(rect.height),
+                      natural_width: Number(node.naturalWidth || 0),
+                      natural_height: Number(node.naturalHeight || 0),
+                      alt_length: String(node.alt || '').length,
+                      source: redact(source)
+                    };
+                  });
+                  return {
+                    img_count: root.querySelectorAll('img').length,
+                    picture_count: root.querySelectorAll('picture').length,
+                    canvas_count: root.querySelectorAll('canvas').length,
+                    svg_count: root.querySelectorAll('svg').length,
+                    link_count: root.querySelectorAll('a').length,
+                    visible_image_like: details.filter((item) => item.visible && ['img','picture','canvas'].includes(item.tag)).length,
+                    details
+                  };
+                }
+                """
+            )
+        except Exception:
+            return {}
 
     async def close(self) -> None:
         self.ready = False
