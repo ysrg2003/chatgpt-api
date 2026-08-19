@@ -47,6 +47,9 @@ class _RecoveryPage:
     async def reload(self, **_kwargs):
         self.reloaded = True
 
+    async def goto(self, *_args, **_kwargs):
+        self.reloaded = True
+
 
 class CoreTests(unittest.TestCase):
     def test_generation_recovery_reloads_when_stop_control_fails(self):
@@ -69,6 +72,53 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(page.reloaded)
         self.assertTrue(gateway.ready)
         gateway.find_input.assert_awaited_once_with(20)
+
+    def test_stabilization_accepts_new_assistant_text_without_main_article(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+        gateway.page = object()
+        gateway._extract_response = AsyncMock(return_value=("new answer", []))
+        gateway._generation_active = AsyncMock(return_value=False)
+        gateway._assistant_count = AsyncMock(return_value=2)
+        response_text, images = asyncio.run(
+            gateway._wait_for_response("hello", 1, "old answer", 0, False, timeout_seconds=1)
+        )
+        self.assertEqual(response_text, "new answer")
+        self.assertEqual(images, [])
+
+    def test_timeout_retries_once_after_recovery(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+        gateway.page = object()
+        gateway.ready = True
+        gateway._generation_active = AsyncMock(return_value=False)
+        gateway._assistant_count = AsyncMock(return_value=0)
+        gateway._latest_assistant_text = AsyncMock(return_value="")
+        gateway._image_count = AsyncMock(return_value=0)
+        gateway._submit_prompt = AsyncMock()
+        gateway._recover_after_timeout = AsyncMock()
+        gateway._wait_for_response = AsyncMock(side_effect=[TimeoutError("stale"), ("recovered", [])])
+        result = asyncio.run(gateway.send_message("hello"))
+        self.assertTrue(result["success"])
+        self.assertEqual(result["response"], "recovered")
+        self.assertEqual(gateway._wait_for_response.await_count, 2)
+        gateway._recover_after_timeout.assert_awaited_once()
 
     def test_parse_netscape_cookies(self):
         text = "# Netscape HTTP Cookie File\n.chatgpt.com\tTRUE\t/\tTRUE\t0\tname\tvalue\n"
@@ -117,6 +167,12 @@ class CoreTests(unittest.TestCase):
             "https://www.google.com/s2/favicons?domain=example.com", ""
         ))
         self.assertFalse(BrowserGateway._is_generated_image_candidate("data:image/png;base64,abc", ""))
+        self.assertTrue(BrowserGateway._is_generated_image_candidate(
+            "https://chatgpt.com/backend-api/files/abc/content", "", allow_unlabeled=True
+        ))
+        self.assertFalse(BrowserGateway._is_generated_image_candidate(
+            "https://chatgpt.com/assets/avatar.png", "", allow_unlabeled=True
+        ))
 
     def test_live_search_prefix_is_not_added_for_normal_request(self):
         messages = [{"role": "user", "content": "اشرح الذكاء الاصطناعي"}]

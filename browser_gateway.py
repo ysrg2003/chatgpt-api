@@ -285,146 +285,155 @@ class BrowserGateway:
         async with self.lock:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
+            recovered_timeout = False
             try:
-                if await self._generation_active():
-                    LOGGER.warning("ChatGPT page still reports an active generation before a new request; attempting recovery")
-                    await self._recover_after_timeout()
+                for request_attempt in range(2):
                     if not self.ready or self.page is None:
                         return {"success": False, "error": self.startup_error or "Browser recovery failed"}
-                previous_count = await self._assistant_count()
-                previous_text = await self._latest_assistant_text()
-                previous_image_count = await self._image_count() if capture_images else 0
-                submitted = False
-                interaction_error = ""
-                for attempt in range(2):
-                    input_box = await self.find_input(10)
-                    if input_box is None and self.page is not None:
-                        try:
-                            await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
-                        except Exception:
-                            await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=45_000)
-                        input_box = await self.find_input(12)
-                    if input_box is None:
-                        continue
+                    if await self._generation_active():
+                        LOGGER.warning(
+                            "ChatGPT page still reports an active generation before a new request; attempting recovery"
+                        )
+                        await self._recover_after_timeout()
+                        if not self.ready or self.page is None:
+                            return {"success": False, "error": self.startup_error or "Browser recovery failed"}
+                    previous_count = await self._assistant_count()
+                    previous_text = await self._latest_assistant_text()
+                    previous_image_count = await self._image_count() if capture_images else 0
+                    await self._submit_prompt(prompt, previous_count)
+                    self.last_request_at = time.time()
+                    response_timeout = max(
+                        self.settings.request_timeout_seconds,
+                        540.0 if capture_images else self.settings.request_timeout_seconds,
+                    )
                     try:
-                        try:
-                            await input_box.click(timeout=8_000)
-                        except Exception:
-                            await input_box.click(timeout=8_000, force=True)
-                        tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
-                        if tag_name == "div":
-                            # First use Playwright's contenteditable-aware fill so the
-                            # site's React/ProseMirror state receives a real input event.
-                            try:
-                                await input_box.fill(prompt, timeout=8_000)
-                            except Exception:
-                                await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
-                            current_content = await input_box.evaluate(
-                                "(el) => String(el.innerText ?? el.textContent ?? '')"
-                            )
-                            if current_content.strip() != prompt.strip():
-                                await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
-                            # Explicitly notify the editor even when its accessibility
-                            # wrapper is marked aria-hidden by the ChatGPT shell.
-                            await input_box.dispatch_event(
-                                "input", {"inputType": "insertText", "data": prompt}
-                            )
-                        else:
-                            await input_box.fill(prompt, timeout=8_000)
-                        await asyncio.sleep(0.2)
-                        # ChatGPT's ProseMirror composer is most reliably submitted by
-                        # the real keyboard path. Try the same Enter action a user would
-                        # perform before falling back to the explicit send button.
-                        await input_box.focus()
-                        await self.page.keyboard.press("Enter", delay=20)
-                        await asyncio.sleep(1.2)
-                        enter_started_generation = await self._generation_active()
-                        enter_created_assistant = await self._assistant_count() > previous_count
-                        if enter_started_generation or enter_created_assistant:
-                            LOGGER.info(
-                                "ChatGPT prompt submitted with Enter; generation=%s assistant_count_increased=%s",
-                                enter_started_generation,
-                                enter_created_assistant,
-                            )
-                        else:
-                            send_button = self.page.locator(
-                                '#composer-submit-button, '
-                                'button[data-testid="send-button"], '
-                                'button[aria-label*="Send prompt" i], '
-                                'button[aria-label="Send" i], '
-                                'button[aria-label*="إرسال" i]'
-                            )
-                            sent_by_button = False
-                            for send_index in range(await send_button.count()):
-                                candidate_send = send_button.nth(send_index)
-                                if await candidate_send.is_visible() and await candidate_send.is_enabled():
-                                    try:
-                                        await candidate_send.click(timeout=8_000)
-                                    except Exception:
-                                        await candidate_send.click(timeout=8_000, force=True)
-                                    await asyncio.sleep(1.0)
-                                    # A locator click can complete without triggering the
-                                    # shell's real user-gesture path. Verify submission and
-                                    # try DOM click and page-mouse click before failing.
-                                    if not await self._submission_started(previous_count):
-                                        try:
-                                            await candidate_send.evaluate("(el) => el.click()")
-                                            await asyncio.sleep(1.0)
-                                        except Exception as dom_click_exc:
-                                            LOGGER.debug("DOM send fallback failed: %s", self._safe_error(dom_click_exc))
-                                    if not await self._submission_started(previous_count):
-                                        try:
-                                            button_box = await candidate_send.bounding_box()
-                                            if button_box:
-                                                await self.page.mouse.click(
-                                                    button_box["x"] + button_box["width"] / 2,
-                                                    button_box["y"] + button_box["height"] / 2,
-                                                )
-                                                await asyncio.sleep(1.0)
-                                                LOGGER.info("ChatGPT send fallback repeated with page mouse click")
-                                        except Exception as mouse_exc:
-                                            LOGGER.debug("Page mouse send fallback failed: %s", self._safe_error(mouse_exc))
-                                    sent_by_button = await self._submission_started(previous_count)
-                                    if sent_by_button:
-                                        LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
-                                        break
-                                    LOGGER.warning("ChatGPT send button did not submit or clear the composer")
-                            if not sent_by_button:
-                                raise RuntimeError("ChatGPT send control did not submit the prompt")
-                        submitted = True
-                        break
-                    except Exception as exc:
-                        interaction_error = self._safe_error(exc)[:240]
-                        if attempt == 0 and self.page is not None:
-                            try:
-                                await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
-                            except Exception:
-                                pass
-                if not submitted:
-                    diagnostic = await self._input_diagnostics()
-                    if interaction_error:
-                        diagnostic += f" interaction={interaction_error}"
-                    LOGGER.warning("ChatGPT input interaction unavailable: %s", diagnostic)
-                    raise RuntimeError(f"Could not interact with ChatGPT input ({diagnostic})")
-                self.last_request_at = time.time()
-
-                response_timeout = max(
-                    self.settings.request_timeout_seconds,
-                    540.0 if capture_images else self.settings.request_timeout_seconds,
-                )
-                response_text, images = await self._wait_for_response(
-                    prompt, previous_count, previous_text, previous_image_count, capture_images,
-                    timeout_seconds=response_timeout,
-                )
-                return {"success": True, "response": response_text, "images": images, "prompt": prompt}
+                        response_text, images = await self._wait_for_response(
+                            prompt,
+                            previous_count,
+                            previous_text,
+                            previous_image_count,
+                            capture_images,
+                            timeout_seconds=response_timeout,
+                        )
+                        return {"success": True, "response": response_text, "images": images, "prompt": prompt}
+                    except TimeoutError:
+                        await self._recover_after_timeout()
+                        recovered_timeout = True
+                        if request_attempt == 0 and self.ready and self.page is not None:
+                            LOGGER.warning("ChatGPT request timed out; retrying once after fresh-conversation recovery")
+                            continue
+                        raise
+                return {"success": False, "error": "ChatGPT request did not complete after recovery retry"}
             except Exception as exc:
-                if isinstance(exc, TimeoutError):
+                if isinstance(exc, TimeoutError) and not recovered_timeout:
                     await self._recover_after_timeout()
                 LOGGER.exception("ChatGPT request failed")
                 return {"success": False, "error": self._safe_error(exc)}
 
+    async def _submit_prompt(self, prompt: str, previous_count: int) -> None:
+        submitted = False
+        interaction_error = ""
+        for attempt in range(2):
+            input_box = await self.find_input(10)
+            if input_box is None and self.page is not None:
+                try:
+                    await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
+                except Exception:
+                    await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=45_000)
+                input_box = await self.find_input(12)
+            if input_box is None:
+                continue
+            try:
+                try:
+                    await input_box.click(timeout=8_000)
+                except Exception:
+                    await input_box.click(timeout=8_000, force=True)
+                tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
+                if tag_name == "div":
+                    try:
+                        await input_box.fill(prompt, timeout=8_000)
+                    except Exception:
+                        await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                    current_content = await input_box.evaluate(
+                        "(el) => String(el.innerText ?? el.textContent ?? '')"
+                    )
+                    if current_content.strip() != prompt.strip():
+                        await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
+                    await input_box.dispatch_event("input", {"inputType": "insertText", "data": prompt})
+                else:
+                    await input_box.fill(prompt, timeout=8_000)
+                await asyncio.sleep(0.2)
+                await input_box.focus()
+                await self.page.keyboard.press("Enter", delay=20)
+                await asyncio.sleep(1.2)
+                enter_started_generation = await self._generation_active()
+                enter_created_assistant = await self._assistant_count() > previous_count
+                if enter_started_generation or enter_created_assistant:
+                    LOGGER.info(
+                        "ChatGPT prompt submitted with Enter; generation=%s assistant_count_increased=%s",
+                        enter_started_generation,
+                        enter_created_assistant,
+                    )
+                else:
+                    send_button = self.page.locator(
+                        '#composer-submit-button, '
+                        'button[data-testid="send-button"], '
+                        'button[aria-label*="Send prompt" i], '
+                        'button[aria-label="Send" i], '
+                        'button[aria-label*="إرسال" i]'
+                    )
+                    sent_by_button = False
+                    for send_index in range(await send_button.count()):
+                        candidate_send = send_button.nth(send_index)
+                        if await candidate_send.is_visible() and await candidate_send.is_enabled():
+                            try:
+                                await candidate_send.click(timeout=8_000)
+                            except Exception:
+                                await candidate_send.click(timeout=8_000, force=True)
+                            await asyncio.sleep(1.0)
+                            if not await self._submission_started(previous_count):
+                                try:
+                                    await candidate_send.evaluate("(el) => el.click()")
+                                    await asyncio.sleep(1.0)
+                                except Exception as dom_click_exc:
+                                    LOGGER.debug("DOM send fallback failed: %s", self._safe_error(dom_click_exc))
+                            if not await self._submission_started(previous_count):
+                                try:
+                                    button_box = await candidate_send.bounding_box()
+                                    if button_box:
+                                        await self.page.mouse.click(
+                                            button_box["x"] + button_box["width"] / 2,
+                                            button_box["y"] + button_box["height"] / 2,
+                                        )
+                                        await asyncio.sleep(1.0)
+                                        LOGGER.info("ChatGPT send fallback repeated with page mouse click")
+                                except Exception as mouse_exc:
+                                    LOGGER.debug("Page mouse send fallback failed: %s", self._safe_error(mouse_exc))
+                            sent_by_button = await self._submission_started(previous_count)
+                            if sent_by_button:
+                                LOGGER.info("ChatGPT prompt submitted with explicit send button fallback")
+                                break
+                            LOGGER.warning("ChatGPT send button did not submit or clear the composer")
+                    if not sent_by_button:
+                        raise RuntimeError("ChatGPT send control did not submit the prompt")
+                submitted = True
+                break
+            except Exception as exc:
+                interaction_error = self._safe_error(exc)[:240]
+                if attempt == 0 and self.page is not None:
+                    try:
+                        await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
+                    except Exception:
+                        pass
+        if not submitted:
+            diagnostic = await self._input_diagnostics()
+            if interaction_error:
+                diagnostic += f" interaction={interaction_error}"
+            LOGGER.warning("ChatGPT input interaction unavailable: %s", diagnostic)
+            raise RuntimeError(f"Could not interact with ChatGPT input ({diagnostic})")
+
     async def _recover_after_timeout(self) -> None:
-        """Stop stale generation state and reload the page before the next request."""
+        """Stop stale state and open a fresh conversation before the next request."""
         if self.page is None:
             return
         try:
@@ -443,11 +452,16 @@ class BrowserGateway:
         except Exception:
             LOGGER.debug("Could not click ChatGPT stop control during recovery", exc_info=True)
         try:
-            if await self._generation_active():
-                LOGGER.warning("ChatGPT generation remained active; reloading the browser page")
-                await self.page.reload(wait_until="domcontentloaded", timeout=45_000)
-                if not await self.find_input(20):
-                    raise RuntimeError("ChatGPT input was not found after generation recovery")
+            # Reloading the same conversation can preserve the broken DOM/session state.
+            # Always navigate to the ChatGPT root after a timeout so the next request
+            # starts in a fresh conversation, even when the stop control disappeared.
+            LOGGER.warning("ChatGPT recovery: opening a fresh conversation after timeout")
+            await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=45_000)
+            self.image_data_cache.clear()
+            if not await self.find_input(20):
+                raise RuntimeError("ChatGPT input was not found after generation recovery")
+            self.ready = True
+            self.startup_error = None
         except Exception as exc:
             self.ready = False
             self.startup_error = self._safe_error(exc)
@@ -477,6 +491,10 @@ class BrowserGateway:
             generation_active = await self._generation_active()
             image_signature = "|".join(item.get("src", "") for item in current_images)
             changed = bool(current_text or current_images)
+            if current_text and not generation_active and (
+                current_text != previous_text or await self._assistant_count() > previous_count
+            ):
+                return current_text.strip(), current_images
             if current_images and image_signature == last_image_signature:
                 image_stable_samples += 1
             else:
@@ -603,16 +621,25 @@ class BrowserGateway:
             return "", []
         try:
             global_images = (
-                await self._extract_images(self.page.locator("main"), start_index=previous_image_count)
+                                await self._extract_images(
+                    self.page.locator("main"),
+                    start_index=previous_image_count,
+                    allow_unlabeled=True,
+                )
                 if capture_images
                 else []
+
             )
             messages = self.page.locator('[data-message-author-role="assistant"]')
             count = await messages.count()
             if count:
                 latest = messages.nth(count - 1)
                 text = (await latest.inner_text(timeout=3_000)).strip()
-                images = (await self._extract_images(latest) if capture_images else []) or global_images
+                images = (
+                    await self._extract_images(latest, allow_unlabeled=True)
+                    if capture_images
+                    else []
+                ) or global_images
                 if count > previous_count or text != previous_text or images:
                     return self._clean_response(text, prompt), images
                 return "", []
@@ -627,6 +654,18 @@ class BrowserGateway:
             return ""
         if src in self.image_data_cache:
             return self.image_data_cache[src]
+        try:
+            if self.context is not None:
+                response = await self.context.request.get(src, timeout=30_000)
+                if response.ok:
+                    body = await response.body()
+                    mime_type = (response.headers.get("content-type") or "image/png").split(";", 1)[0]
+                    if mime_type.startswith("image/") and body:
+                        data_url = f"data:{mime_type};base64,{base64.b64encode(body).decode('ascii')}"
+                        self.image_data_cache[src] = data_url
+                        return data_url
+        except Exception:
+            LOGGER.debug("Context request could not download generated image", exc_info=True)
         try:
             data_url = await self.page.evaluate(
                 """
@@ -654,18 +693,40 @@ class BrowserGateway:
         return ""
 
     @staticmethod
-    def _is_generated_image_candidate(src: str, alt: str) -> bool:
+    def _is_generated_image_candidate(
+        src: str,
+        alt: str,
+        *,
+        allow_unlabeled: bool = False,
+        width: int = 0,
+        height: int = 0,
+    ) -> bool:
         source = src.lower()
         description = alt.lower()
+        blocked_markers = ("favicon", "avatar", "profile", "logo", "icon", "emoji", "thumbnail")
+        if not src or any(marker in source or marker in description for marker in blocked_markers):
+            return False
         if src.startswith("blob:"):
             return True
         if "generated image" in description or "generated_image" in description:
             return True
-        if "backend-api" in source and ("file_" in source or "estuary" in source or "/content" in source):
+        if "backend-api" in source and any(marker in source for marker in ("file_", "estuary", "/content", "/files/")):
             return True
-        return src.startswith("data:") and "generated" in description
+        if allow_unlabeled and src.startswith(("https://", "http://")) and (
+            "chatgpt.com/backend-api/" in source or "oaidalle" in source
+        ):
+            return True
+        if allow_unlabeled and src.startswith("data:image/") and width >= 64 and height >= 64:
+            return True
+        return False
 
-    async def _extract_images(self, container: Any, start_index: int = 0) -> list[dict[str, str]]:
+    async def _extract_images(
+        self,
+        container: Any,
+        start_index: int = 0,
+        *,
+        allow_unlabeled: bool = False,
+    ) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
         seen: set[str] = set()
         try:
@@ -682,7 +743,17 @@ class BrowserGateway:
                 if not src or src in seen:
                     continue
                 alt = (await image.get_attribute("alt") or "").strip()
-                if not self._is_generated_image_candidate(src, alt):
+                try:
+                    dimensions = await image.evaluate(
+                        "(node) => ({width: node.naturalWidth || 0, height: node.naturalHeight || 0})"
+                    )
+                    width = int(dimensions.get("width", 0)) if isinstance(dimensions, dict) else 0
+                    height = int(dimensions.get("height", 0)) if isinstance(dimensions, dict) else 0
+                except Exception:
+                    width = height = 0
+                if not self._is_generated_image_candidate(
+                    src, alt, allow_unlabeled=allow_unlabeled, width=width, height=height
+                ):
                     continue
                 seen.add(src)
                 item: dict[str, str] = {"src": src, "alt": alt}
