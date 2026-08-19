@@ -272,14 +272,37 @@ class BrowserGateway:
             if not self.ready or self.page is None:
                 return {"success": False, "error": self.startup_error or "Browser is not ready"}
             try:
-                await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60_000)
-                if not await self.find_input(20):
-                    raise RuntimeError("ChatGPT input was not found after starting a new chat")
+                await self._open_fresh_conversation()
                 return {"success": True, "message": "New chat started"}
             except Exception as exc:
                 self.ready = False
                 self.startup_error = self._safe_error(exc)
                 return {"success": False, "error": self.startup_error}
+
+    async def _open_fresh_conversation(self) -> None:
+        if self.page is None:
+            raise RuntimeError("Browser page is unavailable")
+        clicked = False
+        for label in ("New chat", "دردشة جديدة"):
+            try:
+                links = self.page.locator("a").filter(has_text=label)
+                for index in range(await links.count()):
+                    candidate = links.nth(index)
+                    if await candidate.is_visible() and await candidate.is_enabled():
+                        await candidate.click(timeout=8_000)
+                        clicked = True
+                        break
+                if clicked:
+                    break
+            except Exception:
+                continue
+        if not clicked:
+            await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60_000)
+        else:
+            await self.page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        self.image_data_cache.clear()
+        if not await self.find_input(20):
+            raise RuntimeError("ChatGPT input was not found after starting a fresh conversation")
 
     async def send_message(self, prompt: str, *, capture_images: bool = False) -> dict[str, Any]:
         async with self.lock:
@@ -456,10 +479,7 @@ class BrowserGateway:
             # Always navigate to the ChatGPT root after a timeout so the next request
             # starts in a fresh conversation, even when the stop control disappeared.
             LOGGER.warning("ChatGPT recovery: opening a fresh conversation after timeout")
-            await self.page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=45_000)
-            self.image_data_cache.clear()
-            if not await self.find_input(20):
-                raise RuntimeError("ChatGPT input was not found after generation recovery")
+            await self._open_fresh_conversation()
             self.ready = True
             self.startup_error = None
         except Exception as exc:
