@@ -247,7 +247,7 @@ class BrowserGateway:
             return await self.page.evaluate(
                 """
                 () => {
-                  const root = document.querySelector('main') || document.body;
+                  const root = document.body;
                   const redact = (value) => {
                     const text = String(value || '').toLowerCase();
                     const kind = text.startsWith('data:image/') ? 'data_image' :
@@ -734,7 +734,7 @@ class BrowserGateway:
         if self.page is None:
             return []
         try:
-            images = self.page.locator("main img")
+            images = self.page.locator("img")
             sources: list[str] = []
             for index in range(await images.count()):
                 src = (await images.nth(index).evaluate(
@@ -779,7 +779,7 @@ class BrowserGateway:
         try:
             global_images = (
                                 await self._extract_images(
-                    self.page.locator("main"),
+                    self.page.locator("body"),
                     allow_unlabeled=True,
                     exclude_sources=set(previous_image_sources),
                 )
@@ -907,7 +907,7 @@ class BrowserGateway:
                 alt = (await image.get_attribute("alt") or "").strip()
                 try:
                     dimensions = await image.evaluate(
-                        "(node) => ({width: node.naturalWidth || 0, height: node.naturalHeight || 0})"
+                        "(node) => ({width: Math.max(node.naturalWidth || 0, Math.round(node.getBoundingClientRect().width)), height: Math.max(node.naturalHeight || 0, Math.round(node.getBoundingClientRect().height))})"
                     )
                     width = int(dimensions.get("width", 0)) if isinstance(dimensions, dict) else 0
                     height = int(dimensions.get("height", 0)) if isinstance(dimensions, dict) else 0
