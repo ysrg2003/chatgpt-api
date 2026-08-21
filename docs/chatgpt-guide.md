@@ -610,3 +610,7 @@ find . -maxdepth 3 -type f \( -name '*.env' -o -name '*cookie*' -o -name '*respo
 [2]: https://huggingface.co/docs/huggingface_hub/en/quick-start#authentication "Hugging Face Hub Quickstart: authentication and token permissions"
 [3]: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions "GitHub Actions: using secrets"
 [4]: https://github.com/ysrg2003/chatgpt-api "chatgpt-api source repository"
+
+## 14. النصوص الطويلة وإدخال ProseMirror
+
+إذا أعاد طلب نصي طويل HTTP 503 مع أن `/health` جاهز، فراجع [دليل معالجة النصوص الطويلة](long-prompt-input.md). السبب المعروف هو timeout في fallback الإدخال الحرفي داخل محرر ProseMirror، وليس حد `MAX_PROMPT_CHARS`. يستخدم الإصدار الحالي `fill()` ثم `keyboard.insert_text()` السريع، ولا يستخدم التأخير الثابت البالغ 5ms لكل حرف.
