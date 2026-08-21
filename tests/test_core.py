@@ -51,7 +51,68 @@ class _RecoveryPage:
         self.reloaded = True
 
 
+class _PopulateKeyboard:
+    def __init__(self, editor):
+        self.editor = editor
+        self.inserted = ""
+
+    async def insert_text(self, text):
+        self.inserted = text
+        self.editor.content = text
+
+    async def press(self, *_args, **_kwargs):
+        return None
+
+
+class _PopulatePage:
+    def __init__(self, editor):
+        self.keyboard = _PopulateKeyboard(editor)
+
+
+class _PopulateEditor:
+    def __init__(self):
+        self.content = ""
+        self.sequential_calls = []
+
+    async def evaluate(self, script):
+        if "tagName" in script:
+            return "div"
+        return self.content
+
+    async def fill(self, *_args, **_kwargs):
+        raise RuntimeError("simulate ProseMirror fill fallback")
+
+    async def click(self, **_kwargs):
+        return None
+
+    async def press_sequentially(self, text, **kwargs):
+        self.sequential_calls.append((text, kwargs))
+        self.content = text
+
+    async def dispatch_event(self, *_args, **_kwargs):
+        return None
+
+
 class CoreTests(unittest.TestCase):
+    def test_long_prosemirror_fallback_uses_fast_insert_text(self):
+        gateway = BrowserGateway(
+            BrowserSettings(
+                cookies_netscape="",
+                storage_state_json="",
+                profile_path="",
+                headless=True,
+                request_timeout_seconds=1,
+                ready_timeout_seconds=1,
+            )
+        )
+        editor = _PopulateEditor()
+        page = _PopulatePage(editor)
+        gateway.page = page
+        prompt = "x" * 1_500
+        asyncio.run(gateway._populate_input(editor, prompt))
+        self.assertEqual(page.keyboard.inserted, prompt)
+        self.assertEqual(editor.sequential_calls, [])
+
     def test_generation_recovery_reloads_when_stop_control_fails(self):
         gateway = BrowserGateway(
             BrowserSettings(

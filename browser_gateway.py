@@ -474,6 +474,51 @@ class BrowserGateway:
                 LOGGER.exception("ChatGPT request failed")
                 return {"success": False, "error": self._safe_error(exc)}
 
+    async def _populate_input(self, input_box: Any, prompt: str) -> None:
+        """Populate ChatGPT's textarea or ProseMirror editor without slow per-key typing."""
+        if self.page is None:
+            raise RuntimeError("Browser page is unavailable")
+        tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
+        if tag_name != "div":
+            await input_box.fill(prompt, timeout=20_000)
+            return
+
+        try:
+            await input_box.fill(prompt, timeout=20_000)
+        except Exception:
+            try:
+                await input_box.click(timeout=8_000)
+            except Exception:
+                await input_box.click(timeout=8_000, force=True)
+            try:
+                # insert_text is a single fast input operation and preserves the
+                # input event path without waiting once per character.
+                await self.page.keyboard.insert_text(prompt)
+            except Exception:
+                sequential_timeout = max(20_000, min(60_000, 20_000 + len(prompt) * 10))
+                await input_box.press_sequentially(prompt, delay=0, timeout=sequential_timeout)
+
+        current_content = await input_box.evaluate(
+            "(el) => String(el.innerText ?? el.textContent ?? '')"
+        )
+        if current_content.strip() != prompt.strip():
+            try:
+                await input_box.fill(prompt, timeout=20_000)
+            except Exception:
+                await input_box.click(timeout=8_000, force=True)
+                try:
+                    await self.page.keyboard.press("Control+A")
+                except Exception:
+                    pass
+                await self.page.keyboard.insert_text(prompt)
+            current_content = await input_box.evaluate(
+                "(el) => String(el.innerText ?? el.textContent ?? '')"
+            )
+            if current_content.strip() != prompt.strip():
+                sequential_timeout = max(20_000, min(60_000, 20_000 + len(prompt) * 10))
+                await input_box.press_sequentially(prompt, delay=0, timeout=sequential_timeout)
+        await input_box.dispatch_event("input", {"inputType": "insertText", "data": prompt})
+
     async def _submit_prompt(self, prompt: str, previous_count: int) -> None:
         submitted = False
         interaction_error = ""
@@ -492,20 +537,7 @@ class BrowserGateway:
                     await input_box.click(timeout=8_000)
                 except Exception:
                     await input_box.click(timeout=8_000, force=True)
-                tag_name = await input_box.evaluate("(el) => el.tagName.toLowerCase()")
-                if tag_name == "div":
-                    try:
-                        await input_box.fill(prompt, timeout=8_000)
-                    except Exception:
-                        await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
-                    current_content = await input_box.evaluate(
-                        "(el) => String(el.innerText ?? el.textContent ?? '')"
-                    )
-                    if current_content.strip() != prompt.strip():
-                        await input_box.press_sequentially(prompt, delay=5, timeout=12_000)
-                    await input_box.dispatch_event("input", {"inputType": "insertText", "data": prompt})
-                else:
-                    await input_box.fill(prompt, timeout=8_000)
+                await self._populate_input(input_box, prompt)
                 await asyncio.sleep(0.2)
                 await input_box.focus()
                 await self.page.keyboard.press("Enter", delay=20)
